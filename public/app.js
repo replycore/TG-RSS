@@ -11,6 +11,7 @@ const state = {
   channels: [],
   authenticated: false,
   initialized: false,
+  tagsOpen: false, // 标签条展开状态（顶栏按钮驱动，跨视图保持）
   settings: null,
 };
 
@@ -25,6 +26,8 @@ const ctx = {
   },
   refreshAuth: () => updateAuthBadge(),
   applyTheme: (theme) => setTheme(theme),
+  // 顶栏「标签展开/折叠」按钮：由 views.js 的标签条更新显示与文案
+  updateTagToggle,
 };
 
 /* --------------------------------------------------------------- 主题 */
@@ -146,20 +149,25 @@ document.getElementById("refresh-all").onclick = async (e) => {
 
 /* ---------------------------------------------------------------- 路由 */
 
-function parseRoute() {
+export function parseRoute() {
   const raw = (location.hash || "#/").replace(/^#/, "");
-  const parts = raw.split("?")[0].split("/").filter(Boolean);
-  if (!parts.length) return { name: "feed" };
-  if (parts[0] === "c" && parts[1]) return { name: "channel", key: decodeURIComponent(parts[1]) };
+  // 先把路径和 query 拆开：否则 `#/?tag=xxx` 的路径部分是 "/"，
+  // 会在下面 parts 为空时提前返回，把 ?tag= 整个丢掉（点了标签却不筛选）
+  const qIndex = raw.indexOf("?");
+  const pathPart = qIndex >= 0 ? raw.slice(0, qIndex) : raw;
+  const queryPart = qIndex >= 0 ? raw.slice(qIndex + 1) : "";
+  const parts = pathPart.split("/").filter(Boolean);
+  const query = new URLSearchParams(queryPart);
+  const tag = query.get("tag");
+  const feedRoute = () => (tag ? { name: "feed", tag } : { name: "feed" });
+  if (!parts.length) return feedRoute();
+  if (parts[0] === "c" && parts[1]) {
+    const key = decodeURIComponent(parts[1]);
+    return tag ? { name: "channel", key, tag } : { name: "channel", key };
+  }
   if (parts[0] === "media") return { name: "media", type: parts[1] || "video", key: parts[2] ? decodeURIComponent(parts[2]) : "" };
   if (parts[0] === "admin") return { name: "admin", tab: parts[1] || "general" };
-  // 信息流支持 #/?tag=xxx 的 #标签 筛选
-  const query = raw.includes("?") ? raw.slice(raw.indexOf("?") + 1) : "";
-  if (query) {
-    const tag = new URLSearchParams(query).get("tag");
-    if (tag) return { name: "feed", tag };
-  }
-  return { name: "feed" };
+  return feedRoute();
 }
 
 function setActiveNav(name) {
@@ -170,6 +178,14 @@ function setActiveNav(name) {
 
 let renderSeq = 0;
 
+/** 顶栏「标签展开 ▾ / 标签折叠 ▴」按钮的显示与文案 */
+function updateTagToggle(visible, open) {
+  const btn = document.getElementById("tag-toggle");
+  if (!btn) return;
+  btn.hidden = !visible;
+  btn.textContent = open ? "标签折叠 ▴" : "标签展开 ▾";
+}
+
 async function route() {
   const r = parseRoute();
   const seq = ++renderSeq;
@@ -179,9 +195,14 @@ async function route() {
 
   clear(app).append(el("div", { class: "loading", text: "加载中…" }));
 
+  // 标签筛选状态：两个视图都可能带 ?tag=，其它视图先清掉回调
+  ctx.feedTag = r.tag || null;
+  ctx.onTagClick = null;
+  ctx.refreshTags = null;
+  if (r.name !== "feed" && r.name !== "channel") updateTagToggle(false, false);
+
   try {
     if (r.name === "feed") {
-      ctx.feedTag = r.tag || null;
       await renderFeed(app, ctx);
     } else if (r.name === "channel") {
       await renderChannel(app, ctx, r.key);
@@ -214,6 +235,20 @@ async function boot() {
   try {
     state.config = await api.config();
     document.getElementById("site-title").textContent = state.config.siteTitle || "TG-RSS";
+    // 顶栏标签按钮：点击展开/收起当前视图的标签条；不在筛选视图时先回信息流
+    const tagBtn = document.getElementById("tag-toggle");
+    if (tagBtn) {
+      tagBtn.addEventListener("click", () => {
+        const routeNow = parseRoute();
+        const filterView = routeNow.name === "feed" || routeNow.name === "channel";
+        state.tagsOpen = !state.tagsOpen;
+        if (filterView && typeof ctx.refreshTags === "function") {
+          ctx.refreshTags();
+        } else {
+          location.hash = "#/";
+        }
+      });
+    }
     document.title = state.config.siteTitle || "TG-RSS";
     const versionNode = document.getElementById("app-version");
     if (versionNode) versionNode.textContent = `v${state.config.version || "1.1.0"}`;

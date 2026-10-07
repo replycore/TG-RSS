@@ -48,9 +48,11 @@ export const api = {
     request(
       `/api/feed${cursorQuery(cursors)}${tag ? `${cursorQuery(cursors) ? "&" : "?"}tag=${encodeURIComponent(tag)}` : ""}`,
     ),
-  posts: (key, before) =>
+  posts: (key, before, tag) =>
     request(
-      `/api/channels/${encodeURIComponent(key)}/posts?limit=20${before ? `&before=${encodeURIComponent(before)}` : ""}`,
+      `/api/channels/${encodeURIComponent(key)}/posts?limit=20${before ? `&before=${encodeURIComponent(before)}` : ""}${
+        tag ? `&tag=${encodeURIComponent(tag)}` : ""
+      }`,
     ),
   media: ({ type, cursors, key, limit } = {}) => {
     const q = new URLSearchParams({ type: type || "video" });

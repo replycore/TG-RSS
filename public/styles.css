@@ -299,7 +299,13 @@ input::placeholder, textarea::placeholder {
 }
 .media-item video { object-fit: contain; }
 /* 信息流 #标签 筛选条 */
-.tag-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 14px; }
+.tag-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 14px; align-items: center; }
+/* 标签展开/折叠：按钮固定在顶栏「媒体」之后 */
+.nav .nav-tag-btn {
+  background: none; border: 0; color: var(--fg-muted); cursor: pointer;
+  padding: 7px 10px; font-size: 14px; border-radius: 8px;
+}
+.nav .nav-tag-btn:hover { color: var(--fg); background: var(--accent-soft); }
 .tag-chip {
   border: 1px solid var(--border); background: var(--bg-elev); color: var(--fg-muted);
   border-radius: 999px; padding: 5px 12px; font-size: 13px; cursor: pointer;
@@ -505,7 +511,7 @@ audio { width: 100%; }
     display: block; position: fixed; inset: var(--topbar-h) 0 0 0;
     background: rgba(0,0,0,.45); z-index: 50;
   }
-  .nav a { padding: 7px 9px; font-size: 14px; }
+  .nav a, .nav .nav-tag-btn { padding: 7px 9px; font-size: 14px; }
   /* 频道列表在移动端压行高：头像与内边距同时收紧 */
   .channel-list { gap: 1px; }
   .channel-list li a { padding: 6px 8px; gap: 8px; }

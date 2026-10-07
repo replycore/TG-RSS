@@ -131,6 +131,40 @@ test("前端：启动、信息流、媒体模式、后台、频道页", async (t
     }, 20000);
     assert.ok(channelReady, "频道页应渲染标题、错误态或空态");
 
+    // 7.5) 路由回归：#/?tag=xxx 必须解析出 tag（否则点标签只是改地址、不筛选）
+    const { parseRoute } = await import("../public/app.js");
+    window.location.hash = "#/?tag=%E7%A7%91%E6%8A%80";
+    assert.equal(parseRoute().name, "feed");
+    assert.equal(parseRoute().tag, "科技", "#/?tag= 应解析出 tag");
+    window.location.hash = "#/";
+    assert.equal(parseRoute().tag, undefined, "不带 tag 时应为 undefined");
+    window.location.hash = "#/media/video";
+    assert.equal(parseRoute().name, "media", "其它路由不受 tag 解析影响");
+    // 频道页也要支持 ?tag=
+    window.location.hash = "#/c/telegram?tag=%E7%A7%91%E6%8A%80";
+    const routeC = parseRoute();
+    assert.equal(routeC.name, "channel");
+    assert.equal(routeC.key, "telegram");
+    assert.equal(routeC.tag, "科技", "频道路由应解析出 tag");
+
+    // 顶栏「标签展开/折叠」按钮存在且文案成对
+    const tagBtn = document.getElementById("tag-toggle");
+    assert.ok(tagBtn, "顶栏应有标签展开/折叠按钮");
+    assert.match(tagBtn.textContent, /^(标签展开 ▾|标签折叠 ▴|)$/);
+
+    // 7.6) 标签链接化：<a>#标签</a>（有无 href）、纯文本都要可点，普通链接不能被抢
+    const { linkifyTags } = await import("../public/ui.js");
+    const tagBox = document.createElement("div");
+    tagBox.innerHTML =
+      '<p><a>#美女跳舞</a> <a href="https://t.me/hashtag/开源">#开源</a> 纯文本 #闲聊 <a href="https://example.com">x</a></p>';
+    const got = [];
+    linkifyTags(tagBox, (t) => got.push(t));
+    assert.equal(tagBox.querySelectorAll(".taglink").length, 3, "三种形态的标签都应变成 .taglink");
+    tagBox.querySelectorAll("a.taglink").forEach((a) => a.click());
+    assert.deepEqual([...got].sort(), ["开源", "美女跳舞", "闲聊"].sort());
+    const plainLink = [...tagBox.querySelectorAll("a")].find((a) => (a.getAttribute("href") || "").includes("example"));
+    assert.ok(plainLink && !plainLink.classList.contains("taglink"), "普通超链接不能被接管");
+
     // 8) 错误路由回退到信息流
     window.location.hash = "#/does-not-exist";
     window.dispatchEvent(new window.Event("hashchange"));

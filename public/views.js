@@ -24,6 +24,40 @@ function withChannelMeta(post, map) {
 
 /* ------------------------------------------------------------- 信息流 */
 
+/**
+ * 标签筛选条（信息流 / 单频道共用）。
+ * 折叠展开状态存放在 ctx.state.tagsOpen，由顶栏「标签展开 ▾ / 标签折叠 ▴」按钮驱动，
+ * 按钮固定在顶栏「媒体」之后，切换视图也不丢状态。
+ */
+function createTagBar({ bar, ctx, tagSet, activeTag, setTag }) {
+  return function renderTagBar() {
+    clear(bar);
+    const list = [...tagSet.values()].sort((a, b) => a.localeCompare(b));
+    if (activeTag && !list.some((t) => t.toLowerCase() === activeTag.toLowerCase())) list.unshift(activeTag);
+    const hasAny = list.length > 0 || !!activeTag;
+    const open = !!ctx.state.tagsOpen;
+    ctx.updateTagToggle(hasAny, open);
+    if (!hasAny) {
+      bar.hidden = true;
+      return;
+    }
+    const chip = (label, active, onclick) =>
+      el("button", { class: `tag-chip${active ? " active" : ""}`, type: "button", text: label, onclick });
+    if (!open) {
+      // 折叠态：只保留当前筛选，可直接点掉
+      bar.hidden = !activeTag;
+      if (activeTag) bar.append(chip(`#${activeTag} ✕`, true, () => setTag(null)));
+      return;
+    }
+    bar.hidden = false;
+    bar.append(chip("全部", !activeTag, () => setTag(null)));
+    for (const tag of list) {
+      const active = activeTag && activeTag.toLowerCase() === tag.toLowerCase();
+      bar.append(chip(`#${tag}`, active, () => setTag(active ? null : tag)));
+    }
+  };
+}
+
 export async function renderFeed(root, ctx) {
   clear(root);
   root.classList.remove("wide");
@@ -57,30 +91,9 @@ export async function renderFeed(root, ctx) {
   const channelMap = {};
   const tagSet = new Map(); // key(小写) -> 展示用原文
 
-  function renderTagBar() {
-    clear(tagBar);
-    const list = [...tagSet.values()].sort((a, b) => a.localeCompare(b));
-    if (activeTag && !list.some((t) => t.toLowerCase() === activeTag.toLowerCase())) list.unshift(activeTag);
-    tagBar.append(
-      el("button", {
-        class: `tag-chip${activeTag ? "" : " active"}`,
-        type: "button",
-        text: "全部",
-        onclick: () => setTag(null),
-      }),
-    );
-    for (const tag of list) {
-      const active = activeTag && activeTag.toLowerCase() === tag.toLowerCase();
-      tagBar.append(
-        el("button", {
-          class: `tag-chip${active ? " active" : ""}`,
-          type: "button",
-          text: `#${tag}`,
-          onclick: () => setTag(active ? null : tag),
-        }),
-      );
-    }
-  }
+  // 信息流：标签条 + 顶栏按钮联动
+  const renderTagBar = createTagBar({ bar: tagBar, ctx, tagSet, activeTag, setTag });
+  ctx.refreshTags = renderTagBar;
   renderTagBar();
 
   const more = createMoreControls(() => load());
@@ -159,7 +172,7 @@ export async function renderFeed(root, ctx) {
 export async function renderChannel(root, ctx, key) {
   clear(root);
   root.classList.remove("wide");
-  ctx.onTagClick = null; // 频道页正文里的 #话题 不做筛选
+  ctx.onTagClick = null; // 频道不存在早退时先复位，避免留下上一个视图的回调
 
   const channel = (ctx.state.channels || []).find((c) => c.key === key);
   if (!channel) {
@@ -188,6 +201,20 @@ export async function renderChannel(root, ctx, key) {
   ]);
   root.append(head);
 
+  // 单频道同样支持 #标签 过滤
+  const activeTag = ctx.feedTag || null;
+  ctx.onTagClick = (tag) => setTag(tag);
+  function setTag(tag) {
+    const base = `#/c/${encodeURIComponent(key)}`;
+    ctx.go(tag ? `${base}?tag=${encodeURIComponent(tag)}` : base);
+  }
+  const tagBar = el("div", { class: "tag-bar" });
+  root.append(tagBar);
+  const tagSet = new Map();
+  const renderTagBar = createTagBar({ bar: tagBar, ctx, tagSet, activeTag, setTag });
+  ctx.refreshTags = renderTagBar;
+  renderTagBar();
+
   const posts = el("div", { class: "posts" });
   const footer = el("div");
   root.append(posts, footer);
@@ -204,15 +231,17 @@ export async function renderChannel(root, ctx, key) {
     loading = true;
     more.setState({ disabled: true, label: "加载中…" });
     try {
-      const data = await api.posts(key, before);
+      const data = await api.posts(key, before, activeTag);
       before = data.next;
       let added = 0;
       (data.posts || []).forEach((p) => {
         const post = withChannelMeta({ ...p, channelKey: key, channelName: channel.name }, { [key]: channel });
         if (!accept(post)) return;
+        (post.tags || []).forEach((t) => tagSet.set(String(t).toLowerCase(), t));
         posts.append(renderPost(post, ctx));
         added += 1;
       });
+      renderTagBar();
       if (!before || added === 0) finished = true;
 
       if (finished) {
@@ -222,7 +251,16 @@ export async function renderChannel(root, ctx, key) {
         more.setState({ disabled: false, label: "加载更多" });
       }
       if (!posts.children.length && finished) {
-        clear(root).append(el("div", { class: "empty", text: "该频道暂无可显示的内容" }));
+        if (activeTag) {
+          clear(root).append(
+            el("div", { class: "empty" }, [
+              el("div", { text: `该频道没有带 #${activeTag} 的内容` }),
+              el("p", {}, [el("button", { class: "btn", type: "button", text: "清除筛选", onclick: () => setTag(null) })]),
+            ]),
+          );
+        } else {
+          clear(root).append(el("div", { class: "empty", text: "该频道暂无可显示的内容" }));
+        }
       }
     } catch (err) {
       if (err.status === 403) {

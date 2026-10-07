@@ -162,9 +162,26 @@ document.addEventListener("keydown", (e) => {
 
 /* ------------------------------------------------------------ 标签链接化 */
 
-/** 把正文文本节点里的 #话题 转成可点的筛选链接（已在 a/button 里的不再处理） */
-function linkifyTags(container, onTag) {
-  // 手动递归收集文本节点：不依赖 NodeFilter，兼容各种 DOM 实现
+export function linkifyTags(container, onTag) {
+  // 1) Telegram 常把标签包成 <a>#标签</a>（多数还没有 href），这些先接管
+  for (const a of [...container.querySelectorAll("a")]) {
+    if (a.classList && a.classList.contains("taglink")) continue;
+    const raw = (a.textContent || "").trim();
+    const m = /^#([\p{L}\p{N}_]{1,32})/u.exec(raw);
+    if (!m) continue;
+    const href = a.getAttribute("href") || "";
+    // 带真实链接的只认 hashtag 链接，别抢普通超链接
+    if (href && !/\/hashtag\//i.test(href)) continue;
+    const tag = m[1];
+    a.classList.add("taglink");
+    if (!href) a.setAttribute("href", `#/?tag=${encodeURIComponent(tag)}`);
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      onTag(tag);
+    });
+  }
+
+  // 2) 手动递归收集纯文本节点（不在 a/button 里的）：不依赖 NodeFilter，兼容各种 DOM 实现
   const nodes = [];
   const walk = (node) => {
     for (const child of node.childNodes || []) {

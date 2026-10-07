@@ -139,7 +139,12 @@ export async function getChannelPosts(request, env, ctx, url, key, authenticated
   const limit = clampInt(url.searchParams.get("limit"), 5, 50, general.pageSize || 20);
   const before = url.searchParams.get("before") || null;
 
-  const { info, posts, next } = await loadChannelPage(env, ctx, channel, before, limit);
+  const { info, posts: allPosts, next } = await loadChannelPage(env, ctx, channel, before, limit);
+  // 与信息流一致的 #标签 过滤
+  const tag = String(url.searchParams.get("tag") || "").replace(/^#/, "").trim().toLowerCase();
+  const posts = tag
+    ? allPosts.filter((p) => (p.tags || []).some((t) => String(t).toLowerCase() === tag))
+    : allPosts;
   return { channel: info, posts, next, count: posts.length };
 }
 
