@@ -105,6 +105,10 @@ npm run dev:node     # 同端口，纯 Node 启动（tools/dev-server.mjs），�
 
 ## 5. 部署到 Cloudflare Workers
 
+> 首次部署前，先把 `wrangler.jsonc` 里的 3 处占位符换成你自己的值：
+> `account_id`（账号 ID）、`routes[0].pattern`（你的域名，或删掉 routes 只用 workers.dev）、
+> `kv_namespaces[0].id`（执行 `npx wrangler kv namespace create TG_RSS_KV` 后得到）。
+
 ```bash
 # 1) 创建 KV 命名空间，把输出的 id 填进 wrangler.jsonc 的 kv_namespaces[0].id
 npx wrangler kv namespace create TG_RSS_KV
