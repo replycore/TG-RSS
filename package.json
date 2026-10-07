@@ -1,6 +1,6 @@
 {
   "name": "tg-rss",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "TG-RSS：可部署在 Cloudflare Workers / Pages 上的 Telegram 频道阅读器（公开频道直取，私密频道走账号桥接）",

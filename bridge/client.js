@@ -45,7 +45,8 @@ export async function resolvePeer(value) {
 
 export async function fetchMessages(peer, { before = null, limit = 20 } = {}) {
   const client = await getClient();
-  const options = { limit: Math.max(1, Math.min(50, limit)) };
+  const rawLimit = Number(limit);
+  const options = { limit: Number.isFinite(rawLimit) ? Math.max(1, Math.min(50, rawLimit)) : 20 };
   if (before && /^\d+$/.test(String(before))) options.offsetId = Number(before);
 
   const out = [];

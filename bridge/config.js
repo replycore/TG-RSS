@@ -34,6 +34,8 @@ export const config = {
   session: String(env.TG_SESSION || ""),
   token: String(env.BRIDGE_TOKEN || ""),
   port: Number(env.PORT || 8788),
+  // 默认只监听本机：私密频道内容不应直接暴露在局域网，需要对外时设 BRIDGE_HOST=0.0.0.0
+  host: String(env.BRIDGE_HOST || "127.0.0.1"),
   publicUrl: String(env.PUBLIC_URL || "").replace(/\/+$/, ""),
   cacheDir: env.CACHE_DIR
     ? path.resolve(env.CACHE_DIR)

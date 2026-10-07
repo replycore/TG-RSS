@@ -196,7 +196,7 @@ function renderChannels(body, ctx, settings) {
   const card = el("div", { class: "card" });
   const titleRow = el("div", { class: "card-title" }, [
     el("h2", { text: "频道列表" }),
-    el("div", { class: "hint", text: "显示名优先于 Telegram 原名；「隐藏」的频道仅登录后可见" }),
+    el("div", { class: "hint", text: "支持粘贴分享链接（t.me/xxx、t.me/s/xxx、tg://resolve?domain=xxx）；显示名优先于 Telegram 原名；「隐藏」的频道仅登录后可见" }),
   ]);
   card.append(titleRow);
 
@@ -205,7 +205,7 @@ function renderChannels(body, ctx, settings) {
     el("option", { value: "public", text: "公开频道" }),
     el("option", { value: "private", text: "私密频道" }),
   ]);
-  const idInput = el("input", { class: "input", placeholder: "用户名，如 telegram", autocomplete: "off" });
+  const idInput = el("input", { class: "input", placeholder: "t.me/频道名 或 @telegram", autocomplete: "off" });
   const nameInput = el("input", { class: "input", placeholder: "显示名称（可选）", autocomplete: "off" });
   const testBtn = el("button", { class: "btn", type: "button", text: "测试" });
   const addBtn = el("button", { class: "btn primary", type: "button", text: "添加" });
@@ -224,7 +224,7 @@ function renderChannels(body, ctx, settings) {
   }
 
   typeSel.onchange = () => {
-    idInput.placeholder = typeSel.value === "public" ? "用户名，如 telegram" : "频道 ID，如 -1001234567890";
+    idInput.placeholder = typeSel.value === "public" ? "t.me/频道名 或 @telegram（可直接粘贴分享链接）" : "频道 ID，如 -1001234567890";
     testResult.textContent = "";
   };
 

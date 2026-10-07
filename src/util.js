@@ -355,3 +355,66 @@ export async function mapPool(items, limit, fn) {
   await Promise.all(workers);
   return results;
 }
+
+/* -------------------------------------------------- 输入规范化（分享链接） */
+
+/**
+ * 把用户粘贴的内容规范成公开频道用户名。
+ * 返回：
+ *   ""    → 空输入
+ *   null  → 认得出来但不支持（私密邀请 / 私密预览链接）
+ *   字符串 → 合法用户名
+ * 支持：@name、name、https://t.me/name、t.me/name、t.me/s/name、
+ *       t.me/name/12345（带消息号）、telegram.me/name、tg://resolve?domain=name
+ */
+export function normalizeChannelInput(raw) {
+  const input = String(raw ?? "").trim();
+  if (!input) return "";
+  // tg://resolve?domain=xxx / tg://xxx?domain=xxx
+  const tg = /tg:\/\/(?:resolve)?\?[^#]*\bdomain=([^&#]+)/i.exec(input);
+  if (tg) return cleanUsername(tg[1]);
+  let s = input;
+  // 去协议（含 tg:// 之外的任意 scheme，如 https://）
+  s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  // 去常见域名前缀
+  s = s.replace(/^(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)\.?/i, "");
+  // 先剥掉剥完主机后残留的前导斜杠（/telegram、/joinchat/xxx 都从这里过），
+  // 否则下面的私密邀请判断会漏掉 /joinchat/…，被误当成公开频道名 joinchat
+  s = s.replace(/^\/+/, "");
+  // 私密邀请 / 贴纸包 / 列表邀请：不能按公开频道抓取
+  if (/^(?:\+|joinchat\/|addstickers\/|addlist\/|share\/)/i.test(s)) return null;
+  // t.me/c/1234567890/42 这种私密预览路径同样不可用
+  if (/^c\/\d+/i.test(s)) return null;
+  // t.me/s/username 公开预览页
+  s = s.replace(/^s\//i, "");
+  // 去掉查询串 / 锚点 / 消息号
+  s = s.split(/[?#]/)[0];
+  s = s.split("/").filter(Boolean)[0] || "";
+  s = s.replace(/^@+/, "");
+  return cleanUsername(s);
+}
+
+function cleanUsername(v) {
+  const value = String(v || "").trim().replace(/^@+/, "");
+  return /^[A-Za-z0-9_]{4,64}$/.test(value) ? value : null;
+}
+
+/** 抽取消息正文里的 #话题 标签（支持中文、字母、数字、下划线），大小写不敏感去重 */
+export function extractTags(text) {
+  const out = [];
+  const seen = new Set();
+  // 前一个字符不能是文字/数字（避免把 C# 之类当标签），其余标点后都算标签起点
+  const re = /(?<![\p{L}\p{N}_])#([\p{L}\p{N}_]{1,32})/gu;
+  const str = String(text ?? "");
+  let m;
+  while ((m = re.exec(str)) !== null) {
+    const tag = m[1].replace(/[.,;:!?，。；：！？、]+$/, "");
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tag);
+    if (out.length >= 16) break;
+  }
+  return out;
+}

@@ -198,6 +198,16 @@ input::placeholder, textarea::placeholder {
 .channel-list .lock { margin-left: auto; color: var(--fg-muted); font-size: 12px; }
 
 .sidebar-foot { margin-top: 16px; padding: 10px 8px 0; border-top: 1px solid var(--border); display: grid; gap: 6px; }
+
+/* 侧栏底部：关于 / 版本号 / 仓库地址 */
+.sidebar-about {
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border);
+  display: grid; gap: 5px; font-size: 12px; color: var(--fg-muted);
+}
+.sidebar-about .about-row { display: flex; gap: 8px; align-items: baseline; }
+.sidebar-about .about-row > span:first-child { flex: none; min-width: 30px; }
+.sidebar-about .v { word-break: break-all; line-height: 1.5; }
+.sidebar-about a.v { color: var(--accent-text); }
 .sidebar-link { color: var(--fg-muted); font-size: 14px; }
 
 .sidebar-mask { display: none; }
@@ -288,6 +298,17 @@ input::placeholder, textarea::placeholder {
   object-fit: cover; background: #000;
 }
 .media-item video { object-fit: contain; }
+/* 信息流 #标签 筛选条 */
+.tag-bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 14px; }
+.tag-chip {
+  border: 1px solid var(--border); background: var(--bg-elev); color: var(--fg-muted);
+  border-radius: 999px; padding: 5px 12px; font-size: 13px; cursor: pointer;
+}
+.tag-chip:hover { border-color: var(--accent); color: var(--accent-text); }
+.tag-chip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.taglink { color: var(--accent-text); font-weight: 600; text-decoration: none; }
+.taglink:hover { text-decoration: underline; }
+
 /* 图片/音频等媒体下方的操作行（查看大图 / 下载） */
 .media-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .media-card .card-actions { margin-top: 8px; }
@@ -485,12 +506,23 @@ audio { width: 100%; }
     background: rgba(0,0,0,.45); z-index: 50;
   }
   .nav a { padding: 7px 9px; font-size: 14px; }
+  /* 频道列表在移动端压行高：头像与内边距同时收紧 */
+  .channel-list { gap: 1px; }
+  .channel-list li a { padding: 6px 8px; gap: 8px; }
+  .channel-list .avatar { width: 24px; height: 24px; font-size: 11px; }
+  .channel-list li a .name { font-size: 14px; }
+  .channel-list .lock { padding: 1px 5px; font-size: 11px; }
+  .sidebar-foot { margin-top: 12px; padding-top: 8px; gap: 5px; }
+  .sidebar-about { margin-top: 8px; padding-top: 8px; }
   .app { padding: 16px 12px 70px; }
   .media-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
 }
 
 @media (max-width: 560px) {
   .brand #site-title { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .channel-list li a { padding: 5px 8px; }
+  .tag-bar { gap: 6px; margin-bottom: 10px; }
+  .tag-chip { padding: 4px 10px; font-size: 12px; }
   .post { padding: 12px; }
   .view-head h1 { font-size: 18px; }
 }

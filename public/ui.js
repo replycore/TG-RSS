@@ -160,6 +160,53 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeLightbox();
 });
 
+/* ------------------------------------------------------------ 标签链接化 */
+
+/** 把正文文本节点里的 #话题 转成可点的筛选链接（已在 a/button 里的不再处理） */
+function linkifyTags(container, onTag) {
+  // 手动递归收集文本节点：不依赖 NodeFilter，兼容各种 DOM 实现
+  const nodes = [];
+  const walk = (node) => {
+    for (const child of node.childNodes || []) {
+      if (child.nodeType === 3) {
+        if (child.nodeValue && child.nodeValue.includes("#")) nodes.push(child);
+      } else if (child.nodeType === 1) {
+        if (child.closest && child.closest("a, button")) continue;
+        walk(child);
+      }
+    }
+  };
+  walk(container);
+  const re = /(^|[\s(（【[{"'])#([\p{L}\p{N}_]{1,32})/gu;
+  for (const node of nodes) {
+    const raw = node.nodeValue;
+    re.lastIndex = 0;
+    if (!re.test(raw)) continue;
+    re.lastIndex = 0;
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    let m;
+    while ((m = re.exec(raw)) !== null) {
+      frag.append(raw.slice(last, m.index + m[1].length));
+      const tag = m[2];
+      frag.append(
+        el("a", {
+          class: "taglink",
+          href: `#/?tag=${encodeURIComponent(tag)}`,
+          text: `#${tag}`,
+          onclick: (e) => {
+            e.preventDefault();
+            onTag(tag);
+          },
+        }),
+      );
+      last = m.index + m[0].length;
+    }
+    frag.append(raw.slice(last));
+    node.replaceWith(frag);
+  }
+}
+
 /* --------------------------------------------------------------- 下载 */
 
 function b64url(str) {
@@ -210,7 +257,10 @@ export function renderPost(post, ctx = {}) {
   }
 
   if (post.textHtml) {
-    article.append(el("div", { class: "post-text", html: post.textHtml }));
+    const textNode = el("div", { class: "post-text", html: post.textHtml });
+    article.append(textNode);
+    // 提供了标签筛选回调（信息流）时，把正文里的 #话题 变成可点的筛选入口
+    if (ctx && typeof ctx.onTagClick === "function") linkifyTags(textNode, ctx.onTagClick);
   }
 
   const media = post.media || [];

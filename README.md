@@ -10,6 +10,9 @@
 - **信息流**：全频道聚合，**按发布时间倒序**展示
 - **下载**：图片 / 视频 / 音频 / 文件在消息卡片、媒体模式卡片和大图查看器里都有「下载」按钮，跨域地址由代理下发 `Content-Disposition: attachment`（带正确文件名）
 - **RSS 订阅**：`/rss.xml` 聚合订阅、`/api/rss?channel=<key>` 单频道订阅，任意 RSS 客户端可用
+- **分享链接添加频道**：直接粘贴 `t.me/xxx`、`t.me/s/xxx`、`@xxx`、`tg://resolve?domain=xxx` 等
+- **#标签筛选**：信息流顶部一键按 `#话题` 过滤，正文里的 `#标签` 可直接点
+- **侧栏底部**：关于 / 版本号 / 仓库地址
 
 **文档导航**
 
@@ -33,6 +36,8 @@
 | 可见性 | `hidden` 频道对未登录用户：列表不返回、帖子 403、媒体 403 |
 | 私密频道 | `bridge/` 账号桥接：读取历史消息、媒体、头像，支持 Range 断点 |
 | RSS 订阅 | `GET /rss.xml` 聚合 / `GET /api/rss?channel=<key>` 单频道，输出 RSS 2.0 |
+| 分享链接 | 后台添加频道接受 t.me 分享链接、@用户名、tg:// 链接，自动归一化 |
+| #标签筛选 | 信息流 `?tag=` 过滤 + 正文 `#话题` 点击筛选 |
 | 媒体下载 | `?dl=1` 走代理回 `attachment`，支持中文文件名（RFC 5987） |
 
 ## 2. 架构
@@ -221,6 +226,9 @@ cp .env.example .env        # 填 TG_API_ID / TG_API_HASH / TG_PHONE / BRIDGE_TO
 npm install
 npm run login               # 按提示输入验证码，自动写入 TG_SESSION
 npm start                   # 启动，监听 8788
+
+鉴权三选一：`x-token` 头（TG-RSS Worker 用）、`Authorization: Bearer`、`?token=` 查询参数。
+监听地址默认只绑 `127.0.0.1`；要让局域网访问需显式 `BRIDGE_HOST=0.0.0.0`。
 ```
 
 ### 让 Worker 能访问到它
@@ -277,6 +285,7 @@ GET  /api/health
 GET  /api/config
 GET  /api/channels                      # 仅返回当前身份可见的频道
 GET  /api/feed?c=<游标>
+GET  /api/feed?c=<游标>&tag=<标签>   # 按 #话题 过滤（可与游标组合）
 GET  /api/channels/:key/posts?before=&limit=
 GET  /api/media?type=video|image|audio|file&c=<游标>&key=
 GET  /api/media/proxy?u=<base64url(地址)>  # Range 直通、白名单

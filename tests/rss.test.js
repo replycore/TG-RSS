@@ -128,7 +128,7 @@ test("本地服务 /rss.xml 与 /api/rss 可订阅", async (t) => {
     assert.match(xml, /<\/rss>/, `${path} 应为完整 XML 文档`);
 
     // 配了频道且信息流能取到条目时，RSS 必须真的吐出 <item>
-    const feedRes = await fetch(`${BASE}/api/feed?limit=10`, { signal: AbortSignal.timeout(30000) }).catch(() => null);
+    const feedRes = await fetch(`${BASE}/api/feed?limit=100`, { signal: AbortSignal.timeout(30000) }).catch(() => null);
     const feed = feedRes && feedRes.ok ? await feedRes.json() : null;
     if (feed && (feed.posts || []).length > 0) {
       assert.match(xml, /<item>/, `${path} 应包含 ${feed.posts.length} 条中的 item`);

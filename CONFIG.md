@@ -106,6 +106,7 @@ TG_PHONE=+8613800000000
 TG_SESSION=           # npm run login 生成，自动写入
 BRIDGE_TOKEN=         # 一长串随机串，要与后台「令牌」一致
 PORT=8788             # 监听端口
+BRIDGE_HOST=127.0.0.1  # 监听地址，默认仅本机；0.0.0.0 才接受外部连接
 PUBLIC_URL=https://    # 桥接的公网地址（https）
 ```
 

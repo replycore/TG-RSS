@@ -44,7 +44,10 @@ async function request(path, options = {}) {
 export const api = {
   config: () => request("/api/config"),
   channels: () => request("/api/channels"),
-  feed: (cursors) => request(`/api/feed${cursorQuery(cursors)}`),
+  feed: (cursors, tag) =>
+    request(
+      `/api/feed${cursorQuery(cursors)}${tag ? `${cursorQuery(cursors) ? "&" : "?"}tag=${encodeURIComponent(tag)}` : ""}`,
+    ),
   posts: (key, before) =>
     request(
       `/api/channels/${encodeURIComponent(key)}/posts?limit=20${before ? `&before=${encodeURIComponent(before)}` : ""}`,

@@ -11,9 +11,10 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { config, requireConfig } from "./config.js";
+import { config, requireConfig, baseUrl } from "./config.js";
 import { resolvePeer, fetchMessages, getMessageById, downloadMediaToCache, downloadAvatarToCache, getMe, disconnect } from "./client.js";
 import { messageToPost, peerInfo } from "./post.js";
+import { authorized } from "./auth.js";
 
 const MIME = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp", bmp: "image/bmp",
@@ -29,20 +30,7 @@ function mimeOf(file) {
   return MIME[ext] || "application/octet-stream";
 }
 
-function equalString(a, b) {
-  const x = String(a || "");
-  const y = String(b || "");
-  if (x.length !== y.length) return false;
-  let diff = 0;
-  for (let i = 0; i < x.length; i += 1) diff |= x.charCodeAt(i) ^ y.charCodeAt(i);
-  return diff === 0;
-}
-
-function authorized(req, url) {
-  if (!config.token) return true;
-  const got = req.headers["x-token"] || url.searchParams.get("token") || "";
-  return equalString(got, config.token);
-}
+/* 鉴权统一在 ./auth.js：支持 x-token 头 / Authorization: Bearer / ?token= */
 
 function sendJson(res, status, data) {
   const body = JSON.stringify(data);
@@ -67,9 +55,11 @@ function serveFile(req, res, file) {
 
   if (range) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
-    if (m) {
-      let start = m[1] === "" ? 0 : Number(m[1]);
+    if (m && (m[1] !== "" || m[2] !== "")) {
+      // bytes=start-end / bytes=start- / bytes=-suffix（最后 N 字节）
+      let start = m[1] === "" ? Math.max(0, stat.size - Number(m[2])) : Number(m[1]);
       let end = m[2] === "" ? stat.size - 1 : Number(m[2]);
+      if (m[1] === "") end = stat.size - 1;
       if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stat.size) {
         res.writeHead(416, { "content-range": `bytes */${stat.size}` });
         res.end();
@@ -81,20 +71,27 @@ function serveFile(req, res, file) {
         "content-range": `bytes ${start}-${end}/${stat.size}`,
         "content-length": end - start + 1,
       });
-      fs.createReadStream(file, { start, end }).pipe(res);
+      const stream = fs.createReadStream(file, { start, end });
+      stream.on("error", () => res.destroy());
+      res.on("close", () => stream.destroy());
+      stream.pipe(res);
       return;
     }
   }
 
   res.writeHead(200, { ...baseHeaders, "content-length": stat.size });
-  fs.createReadStream(file).pipe(res);
+  const stream = fs.createReadStream(file);
+  stream.on("error", () => res.destroy());
+  res.on("close", () => stream.destroy());
+  stream.pipe(res);
 }
 
 async function handleFeed(url) {
   requireConfig();
   const channel = url.searchParams.get("channel");
   const before = url.searchParams.get("before");
-  const limit = Math.max(1, Math.min(50, Number(url.searchParams.get("limit") || 20)));
+  const rawLimit = Number(url.searchParams.get("limit") || 20);
+  const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(50, rawLimit)) : 20;
 
   const peer = await resolvePeer(channel);
   const info = await peerInfo(peer);
@@ -122,7 +119,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (!authorized(req, url)) {
+    if (!authorized(url, req, config.token)) {
       sendJson(res, 401, { error: "invalid_token" });
       return;
     }
@@ -168,10 +165,13 @@ async function main() {
   const me = await getMe();
   fs.mkdirSync(config.cacheDir, { recursive: true });
 
-  server.listen(config.port, async () => {
-    console.log(`TG-RSS bridge listening on http://127.0.0.1:${config.port}`);
+  server.listen(config.port, config.host, async () => {
+    console.log(`TG-RSS bridge listening on ${baseUrl()} （监听 ${config.host}:${config.port}）`);
     console.log(`  登录账号 : ${me.first_name || ""} ${me.last_name || ""} (id=${me.id})`);
-    console.log(`  对外地址 : ${config.publicUrl || `(未设置 PUBLIC_URL) http://127.0.0.1:${config.port}`}`);
+    if (config.host !== "127.0.0.1" && config.host !== "localhost") {
+      console.log("  ⚠ 已对非本机开放：请确认 BRIDGE_TOKEN 足够长，并用防火墙/Tunnel 保护");
+    }
+    console.log(`  对外地址 : ${config.publicUrl || "(未设置 PUBLIC_URL，Worker 将回源 127.0.0.1——跨机部署必须设置)"}`);
     console.log(`  媒体缓存 : ${config.cacheDir}`);
     console.log("  接口     : /health /feed /media /avatar");
   });

@@ -2,7 +2,7 @@
  * KV 存储层：设置、频道、管理员凭据、会话、限流计数。
  * 所有 KV 读写都做 JSON 容错 + 默认值合并。
  */
-import { pbkdf2Hex, randomHex, nowSec, timingSafeEqual, sha256Hex } from "./util.js";
+import { normalizeChannelInput, pbkdf2Hex, randomHex, nowSec, timingSafeEqual, sha256Hex } from "./util.js";
 
 export const KEYS = {
   general: "settings:general",
@@ -119,9 +119,15 @@ export function normalizeChannel(input) {
 export function validateChannel(input) {
   const type = input.type === "private" ? "private" : "public";
   if (type === "public") {
-    const username = String(input.username || "").replace(/^@/, "");
-    if (!/^[A-Za-z0-9_]{4,64}$/.test(username)) {
-      return { error: "公开频道需要合法用户名（4-64 位字母/数字/下划线）" };
+    // 兼容分享链接：t.me/xxx、t.me/s/xxx、@xxx、tg://resolve?domain=xxx 等
+    const username = normalizeChannelInput(input.username);
+    if (username === null) {
+      return {
+        error: "该链接不是公开频道：私密邀请（t.me/+…/joinchat）无法按公开频道抓取，改用「私密频道」方式添加",
+      };
+    }
+    if (!username) {
+      return { error: "请输入频道用户名或 t.me 分享链接（如 t.me/telegram、@telegram）" };
     }
     return { channel: normalizeChannel({ ...input, type, username }) };
   }

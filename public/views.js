@@ -36,6 +36,16 @@ export async function renderFeed(root, ctx) {
   ]);
   root.append(head);
 
+  const activeTag = ctx.feedTag || null;
+  // 正文里的 #话题 点击后回到本视图并按该标签筛选
+  ctx.onTagClick = (tag) => setTag(tag);
+  function setTag(tag) {
+    ctx.go(tag ? `#/?tag=${encodeURIComponent(tag)}` : "#/");
+  }
+
+  const tagBar = el("div", { class: "tag-bar" });
+  root.append(tagBar);
+
   const posts = el("div", { class: "posts" });
   const footer = el("div");
   root.append(posts, footer);
@@ -45,6 +55,33 @@ export async function renderFeed(root, ctx) {
   let loading = false;
   const accept = dedupe();
   const channelMap = {};
+  const tagSet = new Map(); // key(小写) -> 展示用原文
+
+  function renderTagBar() {
+    clear(tagBar);
+    const list = [...tagSet.values()].sort((a, b) => a.localeCompare(b));
+    if (activeTag && !list.some((t) => t.toLowerCase() === activeTag.toLowerCase())) list.unshift(activeTag);
+    tagBar.append(
+      el("button", {
+        class: `tag-chip${activeTag ? "" : " active"}`,
+        type: "button",
+        text: "全部",
+        onclick: () => setTag(null),
+      }),
+    );
+    for (const tag of list) {
+      const active = activeTag && activeTag.toLowerCase() === tag.toLowerCase();
+      tagBar.append(
+        el("button", {
+          class: `tag-chip${active ? " active" : ""}`,
+          type: "button",
+          text: `#${tag}`,
+          onclick: () => setTag(active ? null : tag),
+        }),
+      );
+    }
+  }
+  renderTagBar();
 
   const more = createMoreControls(() => load());
   // 逐页追加时仍按发布时间整体排序：按时间倒序重排并重新挂载（appendChild 会移动已有节点）
@@ -59,19 +96,21 @@ export async function renderFeed(root, ctx) {
     loading = true;
     more.setState({ disabled: true, label: "加载中…" });
     try {
-      const data = await api.feed(cursors);
+      const data = await api.feed(cursors, activeTag);
       cursors = data.cursors || {};
       (data.channels || []).forEach((c) => { if (c?.key) channelMap[c.key] = c; });
       let added = 0;
       (data.posts || []).forEach((p) => {
         const post = withChannelMeta(p, channelMap);
         if (!accept(post)) return;
+        (post.tags || []).forEach((t) => tagSet.set(String(t).toLowerCase(), t));
         const node = renderPost(post, ctx);
         posts.append(node);
         entries.push({ t: Date.parse(post.date) || 0, node });
         added += 1;
       });
       resort();
+      renderTagBar();
       (data.errors || []).forEach((e) => toast(`${e.key}：${e.message}`, "error"));
 
       const hasPending = Object.values(cursors).some((v) => typeof v === "string");
@@ -84,13 +123,23 @@ export async function renderFeed(root, ctx) {
         more.setState({ disabled: false, label: "加载更多" });
       }
       if (!posts.children.length && finished) {
-        clear(root).append(
-          el("div", { class: "empty" }, [
-            el("div", { text: "还没有内容" }),
-            el("div", { class: "hint", text: "前往「管理 → 频道」添加 Telegram 频道" }),
-            el("p", {}, [el("a", { class: "btn primary", href: "#/admin", text: "去配置" })]),
-          ]),
-        );
+        if (activeTag) {
+          clear(root).append(
+            el("div", { class: "empty" }, [
+              el("div", { text: `没有带 #${activeTag} 的已加载内容` }),
+              el("div", { class: "hint", text: "试试点「全部」取消筛选，或加载更多" }),
+              el("p", {}, [el("button", { class: "btn", type: "button", text: "清除筛选", onclick: () => setTag(null) })]),
+            ]),
+          );
+        } else {
+          clear(root).append(
+            el("div", { class: "empty" }, [
+              el("div", { text: "还没有内容" }),
+              el("div", { class: "hint", text: "前往「管理 → 频道」添加 Telegram 频道" }),
+              el("p", {}, [el("a", { class: "btn primary", href: "#/admin", text: "去配置" })]),
+            ]),
+          );
+        }
       }
     } catch (err) {
       toast(err.message || "加载失败", "error");
@@ -110,6 +159,7 @@ export async function renderFeed(root, ctx) {
 export async function renderChannel(root, ctx, key) {
   clear(root);
   root.classList.remove("wide");
+  ctx.onTagClick = null; // 频道页正文里的 #话题 不做筛选
 
   const channel = (ctx.state.channels || []).find((c) => c.key === key);
   if (!channel) {

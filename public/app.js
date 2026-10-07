@@ -69,8 +69,6 @@ async function refreshAuth() {
 function updateAuthBadge() {
   const badge = document.getElementById("auth-badge");
   badge.hidden = !state.authenticated;
-  const navAdmin = document.getElementById("nav-admin");
-  if (navAdmin) navAdmin.textContent = state.authenticated ? "管理" : "登录";
 }
 
 async function loadChannels() {
@@ -155,6 +153,12 @@ function parseRoute() {
   if (parts[0] === "c" && parts[1]) return { name: "channel", key: decodeURIComponent(parts[1]) };
   if (parts[0] === "media") return { name: "media", type: parts[1] || "video", key: parts[2] ? decodeURIComponent(parts[2]) : "" };
   if (parts[0] === "admin") return { name: "admin", tab: parts[1] || "general" };
+  // 信息流支持 #/?tag=xxx 的 #标签 筛选
+  const query = raw.includes("?") ? raw.slice(raw.indexOf("?") + 1) : "";
+  if (query) {
+    const tag = new URLSearchParams(query).get("tag");
+    if (tag) return { name: "feed", tag };
+  }
   return { name: "feed" };
 }
 
@@ -177,6 +181,7 @@ async function route() {
 
   try {
     if (r.name === "feed") {
+      ctx.feedTag = r.tag || null;
       await renderFeed(app, ctx);
     } else if (r.name === "channel") {
       await renderChannel(app, ctx, r.key);
@@ -210,6 +215,8 @@ async function boot() {
     state.config = await api.config();
     document.getElementById("site-title").textContent = state.config.siteTitle || "TG-RSS";
     document.title = state.config.siteTitle || "TG-RSS";
+    const versionNode = document.getElementById("app-version");
+    if (versionNode) versionNode.textContent = `v${state.config.version || "1.1.0"}`;
   } catch (err) {
     console.error("配置加载失败", err);
   }

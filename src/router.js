@@ -11,7 +11,7 @@ import * as media from "./api/media.js";
 import * as admin from "./api/admin.js";
 import * as rss from "./api/rss.js";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 
 async function readBody(request) {
   if (request.method === "GET" || request.method === "HEAD") return {};

@@ -142,3 +142,19 @@ test("mergeDefaults 保底", () => {
   assert.equal(mergeDefaults("media", null).image, true);
   assert.deepEqual(mergeDefaults("channels", null), []);
 });
+
+test("validateChannel：公开频道兼容分享链接", () => {
+  const ok = validateChannel({ type: "public", username: "https://t.me/telegram" });
+  assert.ok(!ok.error, ok.error);
+  assert.equal(ok.channel.username, "telegram");
+
+  const at = validateChannel({ type: "public", username: "@telegram" });
+  assert.ok(!at.error);
+  assert.equal(at.channel.username, "telegram");
+
+  const priv = validateChannel({ type: "public", username: "https://t.me/+AbCdEfGhIjKlM" });
+  assert.ok(priv.error && /私密/.test(priv.error), "私密邀请应给出明确提示");
+
+  const empty = validateChannel({ type: "public", username: "" });
+  assert.ok(empty.error);
+});

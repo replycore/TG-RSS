@@ -3,6 +3,7 @@
  * 隐藏频道（hidden=true）在未登录时：列表不返回、帖子 403、媒体 403。
  */
 import {
+  extractTags,
   HttpError,
   clampInt,
   decodeState,
@@ -96,7 +97,10 @@ export async function loadChannelPage(env, ctx, channel, before = null, limit = 
     parsed = await fetchBridgeFeed(env, channel, before, limit);
   }
   const info = await hydrateMeta(env, ctx, channel, parsed.channel);
-  const posts = parsed.posts.map((p) => decoratePostMedia(p, mediaSettings));
+  const posts = parsed.posts
+    .map((p) => decoratePostMedia(p, mediaSettings))
+    // 统一补 #标签：公开频道解析出的与桥接返回的帖子都走到这里
+    .map((p) => ({ ...p, tags: p.tags?.length ? p.tags : extractTags(p.textPlain || p.text || "") }));
   return { info, posts, next: parsed.nextBefore ?? null };
 }
 
@@ -171,15 +175,18 @@ export async function getFeed(request, env, ctx, url, authenticated) {
     }),
   );
 
-  const posts = perChannel
+  let posts = perChannel
     .flatMap((entry) => entry.posts)
     .sort((a, b) => {
       const ta = a.date ? Date.parse(a.date) : 0;
       const tb = b.date ? Date.parse(b.date) : 0;
       if (tb !== ta) return tb - ta;
       return (b.postId || 0) - (a.postId || 0);
-    })
-    .slice(0, limit);
+    });
+  // 按 #标签 过滤（标签取自消息正文里的 #话题 词）
+  const tag = String(url.searchParams.get("tag") || "").replace(/^#/, "").trim().toLowerCase();
+  if (tag) posts = posts.filter((p) => (p.tags || []).some((t) => String(t).toLowerCase() === tag));
+  posts = posts.slice(0, limit);
 
   return {
     posts,

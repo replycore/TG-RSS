@@ -20,8 +20,7 @@ import {
   styleUrl,
   absoluteUrl,
   decodeDataView,
-  mapPool,
-} from "../src/util.js";
+  mapPool, normalizeChannelInput, extractTags } from "../src/util.js";
 
 test("sanitizeHtml：只保留白名单标签", () => {
   const out = sanitizeHtml('<b>x</b><iframe src="evil"></iframe><img src=x onerror=alert(1)>');
@@ -140,4 +139,31 @@ test("mapPool 保序且限流", async () => {
   });
   assert.deepEqual(out, [2, 4, 6, 8, 10, 12, 14]);
   assert.ok(peak <= 3, `peak=${peak}`);
+});
+
+test("normalizeChannelInput：兼容各种分享链接", () => {
+  const eq = (a, b) => assert.equal(a, b);
+  eq(normalizeChannelInput("telegram"), "telegram");
+  eq(normalizeChannelInput("@telegram"), "telegram");
+  eq(normalizeChannelInput("https://t.me/telegram"), "telegram");
+  eq(normalizeChannelInput("https://t.me/s/telegram"), "telegram");
+  eq(normalizeChannelInput("t.me/telegram/12345?single"), "telegram");
+  eq(normalizeChannelInput("telegram.me/telegram"), "telegram");
+  eq(normalizeChannelInput("tg://resolve?domain=telegram"), "telegram");
+  eq(normalizeChannelInput("  https://t.me/telegram/  "), "telegram");
+  eq(normalizeChannelInput(""), "");
+  // 私密邀请 / 私密预览 → null（提示改用私密频道方式）
+  eq(normalizeChannelInput("https://t.me/+AbCdEfGhIjKlM"), null);
+  eq(normalizeChannelInput("https://t.me/joinchat/AAAAAE"), null);
+  eq(normalizeChannelInput("https://t.me/c/1234567890/42"), null);
+  eq(normalizeChannelInput("!!"), null);
+});
+
+test("extractTags：抽取消息里的 #话题 标签", () => {
+  assert.deepEqual(extractTags("今天发布 #科技 和 #AI，都不错"), ["科技", "AI"]);
+  assert.deepEqual(extractTags("#头部标签 也可以"), ["头部标签"]);
+  assert.deepEqual(extractTags("（#括号后）#标签"), ["括号后", "标签"]);
+  assert.deepEqual(extractTags("没有标签的内容"), []);
+  assert.deepEqual(extractTags("#a #A #a"), ["a"]);
+  assert.deepEqual(extractTags("#新闻，#体育。"), ["新闻", "体育"]);
 });
