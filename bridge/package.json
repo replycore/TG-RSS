@@ -1,0 +1,17 @@
+{
+  "name": "tg-rss-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TG-RSS 私密频道桥接：用你自己的 Telegram 账号读取私密频道，向 Worker 提供 HTTPS 接口",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "login": "node login.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "teleproto": "^1.229.1"
+  }
+}

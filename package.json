@@ -1,0 +1,27 @@
+{
+  "name": "tg-rss",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "TG-RSS：可部署在 Cloudflare Workers / Pages 上的 Telegram 频道阅读器（公开频道直取，私密频道走账号桥接）",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "wrangler dev",
+    "dev:node": "node tools/dev-server.mjs",
+    "test": "node --test",
+    "deploy:worker": "wrangler deploy",
+    "pages:project": "wrangler pages project create tg-rss",
+    "deploy:pages": "wrangler pages deploy public --project-name tg-rss",
+    "bridge:install": "npm --prefix bridge install",
+    "bridge:login": "npm --prefix bridge run login",
+    "bridge:start": "npm --prefix bridge run start"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.14.5",
+    "puppeteer": "^25.12.0",
+    "wrangler": "^4.20.0"
+  }
+}

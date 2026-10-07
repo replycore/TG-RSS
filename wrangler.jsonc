@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tg-rss",
+  "main": "src/index.js",
+  "account_id": "<你的 Cloudflare 账号 ID>",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  // 自定义域名（改成你自己的域名，或删掉 routes 让它只跑 workers.dev）
+  "routes": [
+    {
+      "pattern": "rss.example.com",
+      "custom_domain": true
+    }
+  ],
+  // 仅 /api/* 与 /rss.xml 先走 Worker；静态资源交给 assets，未命中的路径回退 index.html（SPA）
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/rss.xml"]
+  },
+  // 首次部署：npx wrangler kv namespace create TG_RSS_KV，把返回的 id 填到下面
+  "kv_namespaces": [
+    {
+      "binding": "TG_RSS_KV",
+      "id": "<你的 KV namespace id>"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "logpush": false
+}
