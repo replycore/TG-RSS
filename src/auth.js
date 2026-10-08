@@ -16,10 +16,10 @@ import {
   createSession,
   getSession,
   destroySession,
-  checkRateLimit,
-  bumpRateLimit,
+  consumeRateLimit,
   resetRateLimit,
 } from "./store.js";
+import { verifyTurnstile } from "./turnstile.js";
 
 export const SESSION_COOKIE = "tgrss_session";
 
@@ -70,6 +70,16 @@ export async function requireAdmin(request, env) {
 }
 
 export async function handleSetup(request, env, body) {
+  // 人机验证优先：机器人先过验证，才消耗限流额度
+  await verifyTurnstile(request, env, body);
+  const ip = getClientIp(request);
+  const limit = await consumeRateLimit(env, ip);
+  if (!limit.allowed) {
+    const err = new HttpError(429, "尝试次数过多，请稍后再试", "rate_limited");
+    err.retryAfter = Math.max(30, limit.retryAfter || 300);
+    throw err;
+  }
+
   const credential = await getAdminCredential(env);
   if (isInitialized(credential)) {
     throw new HttpError(409, "管理员已初始化，无法重复初始化", "already_initialized");
@@ -80,13 +90,15 @@ export async function handleSetup(request, env, body) {
   if (!/^[\w.-]{1,64}$/.test(username)) throw new HttpError(400, "用户名仅允许字母数字 . _ -", "bad_username");
 
   await createAdminCredential(env, username, password);
+  await resetRateLimit(env, ip);
   const session = await createSession(env, { username });
   return { token: session, username };
 }
 
 export async function handleLogin(request, env, body) {
+  await verifyTurnstile(request, env, body);
   const ip = getClientIp(request);
-  const limit = await checkRateLimit(env, ip);
+  const limit = await consumeRateLimit(env, ip);
   if (!limit.allowed) {
     const err = new HttpError(429, "尝试次数过多，请稍后再试", "rate_limited");
     err.retryAfter = Math.max(30, limit.retryAfter || 300);
@@ -102,7 +114,7 @@ export async function handleLogin(request, env, body) {
   const passOk = await verifyPassword(credential, password);
 
   if (!userOk || !passOk) {
-    await bumpRateLimit(env, ip);
+    // 额度已在 consumeRateLimit 预扣，这里无需再次记账
     throw new HttpError(401, "用户名或密码错误", "bad_credentials");
   }
 
@@ -118,6 +130,7 @@ export async function handleLogout(request, env) {
 }
 
 export async function handleChangePassword(request, env, body) {
+  await verifyTurnstile(request, env, body);
   const state = await requireAdmin(request, env);
   const current = String(body?.currentPassword || "");
   const next = String(body?.newPassword || "");

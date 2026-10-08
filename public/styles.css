@@ -532,3 +532,6 @@ audio { width: 100%; }
   .post { padding: 12px; }
   .view-head h1 { font-size: 18px; }
 }
+
+/* 人机验证组件占位 */
+.turnstile-box { margin: 10px 0 4px; }

@@ -158,6 +158,15 @@ export function timingSafeEqual(a, b) {
 
 /* -------------------------------------------------------------------- Cookie */
 
+/** 百分号解码容错：畸形 % 序列不能让整个请求 500（只退回原值） */
+function safeDecodeURIComponent(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export function parseCookies(request) {
   const header = request.headers.get("cookie") || "";
   const out = {};
@@ -166,7 +175,7 @@ export function parseCookies(request) {
     if (idx < 0) return;
     const k = part.slice(0, idx).trim();
     const v = part.slice(idx + 1).trim();
-    if (k) out[k] = decodeURIComponent(v);
+    if (k) out[k] = safeDecodeURIComponent(v);
   });
   return out;
 }

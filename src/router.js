@@ -10,6 +10,7 @@ import * as content from "./api/content.js";
 import * as media from "./api/media.js";
 import * as admin from "./api/admin.js";
 import * as rss from "./api/rss.js";
+import { turnstileSiteKey } from "./turnstile.js";
 
 const VERSION = "1.1.0";
 
@@ -81,6 +82,8 @@ async function handleApi(request, env, ctx, url) {
         file: mediaSettings.file,
         pageSize: mediaSettings.pageSize,
       },
+      // 配置了 TURNSTILE_SECRET 才会下发，前端据此渲染人机验证组件
+      turnstileSiteKey: turnstileSiteKey(env),
     });
   }
 

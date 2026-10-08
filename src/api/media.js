@@ -7,6 +7,7 @@ import {
   b64urlEncode,
   clampInt,
   decodeState,
+  getClientIp,
 } from "../util.js";
 import { getGeneral, getMediaSettings, getChannels } from "../store.js";
 import { loadChannelPage, visibleChannels, findChannel, assertVisible } from "./content.js";
@@ -173,6 +174,77 @@ function hostAllowed(hostname, bridge) {
   return false;
 }
 
+/* ------------------------------------------------- 代理安全（重定向/内容类型/速率） */
+
+const MAX_REDIRECTS = 3;
+const MAX_PROXY_BYTES = 256 * 1024 * 1024; // 256MB，视频流够用又挡住异常巨响应
+const PROXY_RATE_MAX = 120; // 每 IP 每分钟
+const PROXY_RATE_WINDOW = 60; // 秒
+const proxyBuckets = new Map();
+
+/**
+ * 每跳校验重定向目标：旧实现 fetch 默认 follow，白名单只校验了初始 URL，
+ * 白名单域名一个 302 就能绕过（SSRF/白名单绕过）。现在改 manual + 逐跳复检。
+ */
+export function assertRedirectAllowed(locationHeader, currentUrl, bridge) {
+  let next;
+  try {
+    next = new URL(locationHeader, currentUrl);
+  } catch {
+    throw new HttpError(502, "上游返回了无法解析的重定向", "bad_redirect");
+  }
+  if (next.protocol !== "https:" && next.protocol !== "http:") {
+    throw new HttpError(502, "重定向目标协议不支持", "bad_redirect");
+  }
+  const bridgeHost = bridge && bridge.url ? (() => { try { return new URL(bridge.url).hostname; } catch { return null; } })() : null;
+  if (next.protocol === "http:" && next.hostname !== bridgeHost) {
+    throw new HttpError(403, "重定向目标仅允许 https", "bad_redirect_scheme");
+  }
+  if (!hostAllowed(next.hostname, bridge)) {
+    throw new HttpError(403, "重定向目标不在白名单内", "redirect_not_allowed");
+  }
+  return next;
+}
+
+/**
+ * 上游内容类型安检：
+ * - HTML / XHTML 一律拒绝（同源可执行 → XSS，可打管理员会话）
+ * - SVG/XML 等文档类型返回 "sandbox"（响应要加 CSP: sandbox 头）
+ */
+export function checkProxyContentType(contentType) {
+  const ctype = String(contentType || "").toLowerCase();
+  if (ctype.includes("text/html") || ctype.includes("application/xhtml+xml")) {
+    throw new HttpError(415, "上游返回了 HTML 页面，已拒绝代理", "html_not_allowed");
+  }
+  if (/(?:^|;)\s*(?:image\/svg\+xml|application\/xml|text\/xml)\b/.test(ctype) || ctype.startsWith("image/svg+xml") || ctype.includes("application/xml") || ctype.includes("text/xml")) {
+    return "sandbox";
+  }
+  return "plain";
+}
+
+/** 进程内令牌桶：挡住拿媒体代理当免费 CDN 刷带宽的行为（同 isolate 内无竞态） */
+export function proxyRateConsume(ip) {
+  const now = Date.now();
+  let rec = proxyBuckets.get(ip);
+  if (!rec || now - rec.start >= PROXY_RATE_WINDOW * 1000) {
+    rec = { start: now, count: 0 };
+    proxyBuckets.set(ip, rec);
+    if (proxyBuckets.size > 5000) {
+      for (const [k, v] of proxyBuckets) if (now - v.start >= PROXY_RATE_WINDOW * 1000) proxyBuckets.delete(k);
+    }
+  }
+  rec.count += 1;
+  if (rec.count > PROXY_RATE_MAX) {
+    const err = new HttpError(429, "媒体请求过于频繁，请稍后再试", "proxy_rate_limited");
+    err.retryAfter = Math.max(1, Math.ceil((PROXY_RATE_WINDOW * 1000 - (now - rec.start)) / 1000));
+    throw err;
+  }
+}
+
+function applyDocSecurity(headers, mode) {
+  if (mode === "sandbox") headers.set("content-security-policy", "sandbox");
+}
+
 export async function proxyMedia(request, env, ctx, url) {
   const raw = url.searchParams.get("u");
   if (!raw) throw new HttpError(400, "缺少 u 参数", "bad_url");
@@ -202,6 +274,9 @@ export async function proxyMedia(request, env, ctx, url) {
 
   const filename = sanitizeFilename(nameHint || basenameOf(target));
 
+  // 速率限制：每 IP 每分钟 120 次（媒体播放会连续发 Range 请求，阈值放宽松）
+  proxyRateConsume(getClientIp(request));
+
   const headers = new Headers({ "user-agent": UA, accept: "*/*" });
   const range = request.headers.get("range");
   if (range) headers.set("range", range);
@@ -215,21 +290,53 @@ export async function proxyMedia(request, env, ctx, url) {
   if (cache && !range) {
     try {
       const hit = await cache.match(cacheKey);
-      if (hit) return dl ? withAttachment(hit, filename) : withBrowserCache(hit);
+      if (hit) {
+        // 修复前可能缓存了 HTML，命中也要过安检；不通过就丢缓存改走上游（上游会拒绝）
+        let hitMode = null;
+        try {
+          hitMode = checkProxyContentType(hit.headers.get("content-type"));
+        } catch {
+          hitMode = null;
+        }
+        if (hitMode) return dl ? withAttachment(hit, filename, hitMode) : withBrowserCache(hit, hitMode);
+        if (typeof cache.delete === "function") await cache.delete(cacheKey).catch(() => {});
+      }
     } catch {
       /* ignore */
     }
   }
 
-  let res;
-  try {
-    res = await fetch(target.toString(), { headers });
-  } catch (err) {
-    throw new HttpError(502, `媒体拉取失败：${err?.message || err}`, "media_upstream_error");
+  // 手动跟随重定向：每一跳都重新过白名单（默认 follow 会被白名单域名 302 绕过）
+  let res = null;
+  let currentUrl = target.toString();
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+    try {
+      res = await fetch(currentUrl, { headers, redirect: "manual" });
+    } catch (err) {
+      throw new HttpError(502, `媒体拉取失败：${err?.message || err}`, "media_upstream_error");
+    }
+    if (![301, 302, 303, 307, 308].includes(res.status)) break;
+    const loc = res.headers.get("location");
+    if (!loc) break;
+    if (hop === MAX_REDIRECTS) throw new HttpError(502, "上游重定向次数过多", "too_many_redirects");
+    const next = assertRedirectAllowed(loc, currentUrl, bridge);
+    if (res.body && typeof res.body.cancel === "function") await res.body.cancel().catch(() => {});
+    currentUrl = next.toString();
   }
 
   if (!res.ok && res.status !== 206) {
-    return new Response(res.body, { status: res.status, statusText: res.statusText });
+    // 不再原样透传上游错误页（HTML 错误页会成为同源可执行内容），统一 JSON 错误
+    if (res.body && typeof res.body.cancel === "function") await res.body.cancel().catch(() => {});
+    const status = res.status >= 400 && res.status <= 599 ? res.status : 502;
+    throw new HttpError(status, `上游返回 ${res.status}`, "upstream_status");
+  }
+
+  // 内容类型安检：HTML 拒绝 / SVG·XML 沙箱化
+  const docMode = checkProxyContentType(res.headers.get("content-type"));
+  const declaredLength = Number(res.headers.get("content-length") || 0);
+  if (declaredLength > MAX_PROXY_BYTES) {
+    if (res.body && typeof res.body.cancel === "function") await res.body.cancel().catch(() => {});
+    throw new HttpError(413, "媒体体积超过限制", "too_large");
   }
 
   // 先 clone 再消费 body（顺序反了会抛 “Body has already been consumed”）
@@ -254,6 +361,7 @@ export async function proxyMedia(request, env, ctx, url) {
   outHeaders.set("access-control-allow-origin", "*");
   if (res.status === 200) outHeaders.set("cache-control", "public, max-age=86400");
   outHeaders.set("x-content-type-options", "nosniff");
+  applyDocSecurity(outHeaders, docMode);
   if (dl) outHeaders.set("content-disposition", contentDisposition(filename));
 
   const out = new Response(res.body, {
@@ -302,17 +410,20 @@ function contentDisposition(filename) {
 }
 
 /** 缓存命中时补下载头：缓存响应不可直接改头，重建一个响应即可 */
-function withAttachment(response, filename) {
+function withAttachment(response, filename, mode) {
   const headers = new Headers(response.headers);
   headers.set("content-disposition", contentDisposition(filename));
+  applyDocSecurity(headers, mode || "plain");
   if (!headers.has("cache-control")) headers.set("cache-control", "public, max-age=86400");
   if (!headers.has("access-control-allow-origin")) headers.set("access-control-allow-origin", "*");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
-function withBrowserCache(response) {
+function withBrowserCache(response, mode) {
   const headers = new Headers(response.headers);
   if (!headers.has("cache-control")) headers.set("cache-control", "public, max-age=86400");
   if (!headers.has("access-control-allow-origin")) headers.set("access-control-allow-origin", "*");
+  if (!headers.has("x-content-type-options")) headers.set("x-content-type-options", "nosniff");
+  applyDocSecurity(headers, mode || "plain");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

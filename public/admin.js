@@ -65,6 +65,71 @@ export async function renderAdmin(root, ctx, tab = "general") {
 
 /* --------------------------------------------------------------- 初始化 */
 
+/* --------------------------------------------------------- 人机验证（Turnstile） */
+
+let turnstileScriptPromise = null;
+
+function loadTurnstileScript() {
+  if (typeof window !== "undefined" && window.turnstile) return Promise.resolve(window.turnstile);
+  if (turnstileScriptPromise) return turnstileScriptPromise;
+  turnstileScriptPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    s.async = true;
+    s.onload = () => resolve(window.turnstile);
+    s.onerror = () => {
+      turnstileScriptPromise = null;
+      reject(new Error("验证脚本加载失败"));
+    };
+    document.head.appendChild(s);
+  });
+  return turnstileScriptPromise;
+}
+
+/**
+ * 渲染人机验证组件。sitekey 来自 /api/config（服务端配置 TURNSTILE_SECRET 后才下发）；
+ * 未配置时返回空实现，表单照常提交，后端同样跳过校验（前后端状态一致）。
+ */
+function turnstileField(ctx) {
+  const sitekey = ctx?.state?.config?.turnstileSiteKey;
+  const box = el("div", { class: "turnstile-box" });
+  if (!sitekey) return { box, enabled: false, getToken: async () => "", reset: () => {} };
+
+  let handle = null;
+  let token = "";
+  const ready = (async () => {
+    try {
+      const ts = await loadTurnstileScript();
+      const id = ts.render(box, {
+        sitekey,
+        theme: document.documentElement.dataset.theme === "dark" ? "dark" : "auto",
+        callback: (t) => { token = t; },
+        "expired-callback": () => { token = ""; },
+      });
+      handle = { ts, id };
+      return true;
+    } catch (err) {
+      box.append(el("div", { class: "hint", text: `人机验证组件加载失败：${err?.message || err}` }));
+      return false;
+    }
+  })();
+
+  return {
+    box,
+    enabled: true,
+    getToken: async () => {
+      await ready;
+      return token;
+    },
+    reset: () => {
+      token = "";
+      if (handle) {
+        try { handle.ts.reset(handle.id); } catch { /* ignore */ }
+      }
+    },
+  };
+}
+
 function renderSetup(root, ctx) {
   const wrap = el("div", { class: "auth-wrap card" });
   wrap.append(el("h1", { text: "初始化管理员" }), el("div", { class: "hint", text: "首次访问请设置管理员账号；也可通过环境变量 ADMIN_USERNAME / ADMIN_PASSWORD 管理。" }));
@@ -74,19 +139,25 @@ function renderSetup(root, ctx) {
   const confirm = field("确认密码", { name: "confirm", type: "password", autocomplete: "new-password" });
   const submit = el("button", { class: "btn primary", type: "submit", text: "创建并登录" });
 
-  const form = el("form", {}, [username.node, password.node, confirm.node, submit]);
+  const tsSetup = turnstileField(ctx);
+  const form = el("form", {}, [username.node, password.node, confirm.node, tsSetup.box, submit]);
   form.onsubmit = async (e) => {
     e.preventDefault();
     if (password.input.value !== confirm.input.value) return toast("两次密码不一致", "error");
     if (password.input.value.length < 8) return toast("密码至少 8 位", "error");
     submit.disabled = true;
     try {
-      await api.setup({ username: username.input.value || "admin", password: password.input.value });
+      await api.setup({
+        username: username.input.value || "admin",
+        password: password.input.value,
+        turnstileToken: await tsSetup.getToken(),
+      });
       toast("初始化成功", "ok");
       ctx.state.authenticated = true;
       ctx.go("#/admin/general");
     } catch (err) {
       toast(err.message, "error");
+      tsSetup.reset();
       submit.disabled = false;
     }
   };
@@ -102,18 +173,24 @@ function renderLogin(root, ctx, state) {
   const password = field("密码", { name: "password", type: "password", autocomplete: "current-password" });
   const submit = el("button", { class: "btn primary", type: "submit", text: "登录" });
 
-  const form = el("form", {}, [username.node, password.node, submit]);
+  const tsLogin = turnstileField(ctx);
+  const form = el("form", {}, [username.node, password.node, tsLogin.box, submit]);
   form.onsubmit = async (e) => {
     e.preventDefault();
     submit.disabled = true;
     try {
-      await api.login({ username: username.input.value, password: password.input.value });
+      await api.login({
+        username: username.input.value,
+        password: password.input.value,
+        turnstileToken: await tsLogin.getToken(),
+      });
       toast("登录成功", "ok");
       ctx.state.authenticated = true;
       ctx.refreshAuth();
       ctx.go("#/admin/general");
     } catch (err) {
       toast(err.message, "error");
+      tsLogin.reset();
       submit.disabled = false;
     }
   };
@@ -540,20 +617,26 @@ function renderSecurity(body, ctx, settings) {
     const cur = field("当前密码", { type: "password", autocomplete: "current-password" });
     const next = field("新密码（至少 8 位）", { type: "password", autocomplete: "new-password" });
     const save = el("button", { class: "btn primary", type: "button", text: "修改密码" });
+    const tsPw = turnstileField(ctx);
     save.onclick = async () => {
       save.disabled = true;
       try {
-        await api.changePassword({ currentPassword: cur.input.value, newPassword: next.input.value });
+        await api.changePassword({
+          currentPassword: cur.input.value,
+          newPassword: next.input.value,
+          turnstileToken: await tsPw.getToken(),
+        });
         toast("密码已修改，请重新登录", "ok");
         ctx.state.authenticated = false;
         setTimeout(() => ctx.go("#/admin"), 700);
       } catch (err) {
         toast(err.message, "error");
+        tsPw.reset();
       } finally {
         save.disabled = false;
       }
     };
-    card.append(cur.node, next.node, save);
+    card.append(cur.node, next.node, tsPw.box, save);
     body.append(card);
   }
 

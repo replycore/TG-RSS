@@ -239,8 +239,13 @@ export async function destroySession(env, token) {
 
 /* --------------------------------------------------------------- 登录限流 */
 
+/* 登录/初始化限流：8 次 / 5 分钟（KV 为跨实例兜底）
+   第一层是进程内内存桶：同 isolate 内无竞态、零网络开销；
+   第二层 KV 计数采用「先记账后放行」的预扣语义，
+   避免旧实现「先检查、失败后才记账」窗口里并发请求绕过计数。 */
 const RATE_WINDOW = 300; // 5 分钟
 const RATE_MAX = 8;
+const memoryBuckets = new Map();
 
 export async function checkRateLimit(env, ip) {
   const key = KEYS.rateLimit + ip;
@@ -249,6 +254,33 @@ export async function checkRateLimit(env, ip) {
   if (rec.exp && rec.exp < nowSec()) return { allowed: true, remaining: RATE_MAX };
   if (rec.count >= RATE_MAX) return { allowed: false, remaining: 0, retryAfter: (rec.exp || 0) - nowSec() };
   return { allowed: true, remaining: RATE_MAX - rec.count };
+}
+
+function memoryConsume(ip) {
+  const now = nowSec();
+  if (memoryBuckets.size > 5000) {
+    for (const [k, v] of memoryBuckets) if (v.exp <= now) memoryBuckets.delete(k);
+  }
+  let rec = memoryBuckets.get(ip);
+  if (!rec || rec.exp <= now) {
+    rec = { count: 0, exp: now + RATE_WINDOW };
+    memoryBuckets.set(ip, rec);
+  }
+  rec.count += 1;
+  if (rec.count > RATE_MAX) return { allowed: false, retryAfter: Math.max(1, rec.exp - now) };
+  return { allowed: true, remaining: RATE_MAX - rec.count };
+}
+
+/**
+ * 预扣一次尝试：任一层超限即拒。成功登录后用 resetRateLimit 归零。
+ * 返回 { allowed, retryAfter? }。
+ */
+export async function consumeRateLimit(env, ip) {
+  const mem = memoryConsume(ip);
+  if (!mem.allowed) return mem;
+  const rec = await bumpRateLimit(env, ip); // 记账（预扣）
+  if (rec.count > RATE_MAX) return { allowed: false, retryAfter: Math.max(1, (rec.exp || 0) - nowSec()) };
+  return { allowed: true, remaining: Math.max(0, RATE_MAX - rec.count) };
 }
 
 export async function bumpRateLimit(env, ip) {
@@ -264,5 +296,6 @@ export async function bumpRateLimit(env, ip) {
 }
 
 export async function resetRateLimit(env, ip) {
+  memoryBuckets.delete(ip);
   await deleteKey(env, KEYS.rateLimit + ip);
 }
