@@ -25,6 +25,7 @@ import {
   requireAdmin,
 } from "../auth.js";
 import { fetchPublicChannelPage, fetchBridgeFeed, resolvePublicChannelMeta } from "../tg/fetcher.js";
+import { getRssTokenInfo, rotateRssToken, revokeRssToken } from "../rss-auth.js";
 
 /* ------------------------------------------------------------------ 状态 */
 
@@ -67,6 +68,31 @@ export async function changePassword(request, env, body) {
   const result = await handleChangePassword(request, env, body);
   const headers = result.reauth ? { "set-cookie": clearSessionCookie(request) } : {};
   return json({ ok: true, reauth: !!result.reauth }, { headers });
+}
+
+/* -------------------------------------------------------- RSS 订阅令牌 */
+
+export async function rssTokenState(request, env) {
+  await requireAdmin(request, env);
+  const info = await getRssTokenInfo(env);
+  return { enabled: !!info, masked: info?.masked || null, createdAt: info?.createdAt || null };
+}
+
+/**
+ * action: "rotate"（生成/轮换，旧令牌立即失效）| "revoke"（吊销）
+ * 明文令牌只在 rotate 的响应里出现一次，库里仅存 SHA-256 哈希。
+ */
+export async function rssTokenAction(request, env, body) {
+  await requireAdmin(request, env);
+  const action = String(body?.action || "rotate");
+  if (action === "revoke") {
+    await revokeRssToken(env);
+    return { ok: true, enabled: false };
+  }
+  if (action !== "rotate") throw new HttpError(400, "action 必须是 rotate 或 revoke", "bad_action");
+  const origin = new URL(request.url).origin;
+  const t = await rotateRssToken(env, origin);
+  return { ok: true, enabled: true, token: t.token, masked: t.masked, url: t.url };
 }
 
 /* ------------------------------------------------------------------ 设置 */

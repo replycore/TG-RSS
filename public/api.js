@@ -73,6 +73,8 @@ export const api = {
   testChannel: (channel) => request("/api/admin/channels/test", { method: "POST", body: { channel } }),
   refreshChannel: (key) => request("/api/admin/channels/refresh", { method: "POST", body: { key } }),
   changePassword: (body) => request("/api/admin/password", { method: "POST", body }),
+  rssToken: () => request("/api/admin/rss-token"),
+  rssTokenAction: (action) => request("/api/admin/rss-token", { method: "POST", body: { action } }),
   stats: () => request("/api/admin/stats"),
 };
 

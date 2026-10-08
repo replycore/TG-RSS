@@ -5,9 +5,10 @@
  *   GET /api/rss?channel=k  单个频道
  *   可选 limit=5..200（默认 50）
  */
-import { clampInt } from "../util.js";
+import { clampInt, HttpError } from "../util.js";
 import { getGeneral } from "../store.js";
 import { getFeed, getChannelPosts } from "./content.js";
+import { checkRssToken } from "../rss-auth.js";
 
 const MIME_BY_EXT = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
@@ -140,58 +141,114 @@ ${selfHref ? `    <atom:link href="${escapeXml(selfHref)}" rel="self" type="appl
 `;
 }
 
-function xmlResponse(body, maxAge) {
+function xmlResponse(body, maxAge, isPrivate) {
   return new Response(body, {
     headers: {
       "content-type": "application/rss+xml; charset=utf-8",
-      "cache-control": `public, max-age=${Math.max(0, maxAge)}`,
+      // 带令牌的源含私密内容：private 让共享缓存（CF 边缘）不落盘，每次回源
+      "cache-control": `${isPrivate ? "private" : "public"}, max-age=${Math.max(0, maxAge)}`,
       "x-content-type-options": "nosniff",
+      "referrer-policy": "no-referrer",
     },
   });
+}
+
+/** 401：令牌无效/缺失（阅读器据此提示需要凭据），带标准 WWW-Authenticate */
+function unauthorized(message, code) {
+  const err = new HttpError(401, message, code);
+  err.headers = { "www-authenticate": 'Bearer realm="rss"' };
+  return err;
+}
+
+/** 上游抖动/桥接故障 → 503 + Retry-After，让阅读器重试而不是把空源缓存下来 */
+function upstreamBusy(message) {
+  const err = new HttpError(503, message || "上游暂时不可用，请稍后重试", "upstream_busy");
+  err.retryAfter = 60;
+  return err;
+}
+
+/** 把内容抓取异常映射成阅读器友好的 HTTP 语义（可单测） */
+export function mapRssError(err) {
+  if (!(err instanceof HttpError)) return err;
+  switch (err.code) {
+    case "hidden_channel":
+      // 私密/隐藏频道：没有有效令牌就是需要凭据
+      return unauthorized("私密频道需要有效令牌：链接加 ?token=… 或使用 Authorization: Bearer", "rss_token_required");
+    case "upstream_error":
+    case "rate_limited":
+    case "upstream_status":
+    case "bridge_unreachable":
+    case "bridge_denied":
+    case "bridge_error":
+    case "not_reachable":
+      return upstreamBusy(`上游暂时不可用：${err.message}`);
+    default:
+      return err;
+  }
 }
 
 /* ------------------------------------------------------------ GET /api/rss */
 
 export async function rssFeed(request, env, ctx, url) {
+  // 1) 令牌校验：无效直接401（错误次数超限429）；有效则私密/隐藏频道可见
+  const token = await checkRssToken(request, env, url);
+  if (token.state === "invalid") {
+    throw unauthorized("RSS 令牌无效或已吊销，请在管理后台重新生成", "rss_token_invalid");
+  }
+  const authed = token.state === "valid";
+
   const general = await getGeneral(env);
   const origin = new URL(request.url).origin;
   const maxAge = Number.isFinite(general.cacheTtl) ? general.cacheTtl : 120;
   const channelKey = (url.searchParams.get("channel") || "").trim();
   const limit = clampInt(url.searchParams.get("limit"), 5, 200, 50);
 
-  if (channelKey) {
-    const res = await getChannelPosts(request, env, ctx, url, channelKey, false);
+  try {
+    if (channelKey) {
+      const res = await getChannelPosts(request, env, ctx, url, channelKey, authed);
+      const posts = (res.posts || []).map((p) => ({
+        ...p,
+        channelKey: res.channel.key,
+        channelName: res.channel.name,
+      }));
+      const xml = renderRss({
+        title: `${res.channel.name} - ${general.siteTitle}`,
+        link: `${origin}/#/c/${encodeURIComponent(channelKey)}`,
+        description: res.channel.description || `${general.siteTitle} · ${res.channel.name}`,
+        // self 永远不带令牌：避免令牌被喂给第三方、或随源文本扩散
+        selfHref: `${origin}/api/rss?channel=${encodeURIComponent(channelKey)}`,
+        posts,
+        origin,
+      });
+      return xmlResponse(xml, maxAge, authed);
+    }
+
+    const feedUrl = new URL(url);
+    feedUrl.searchParams.delete("token");
+    feedUrl.searchParams.set("limit", String(limit));
+    const res = await getFeed(request, env, ctx, feedUrl, authed);
+    const nameOf = new Map((res.channels || []).filter((c) => c && c.key).map((c) => [c.key, c.name]));
     const posts = (res.posts || []).map((p) => ({
       ...p,
-      channelKey: res.channel.key,
-      channelName: res.channel.name,
+      channelName: nameOf.get(p.channelKey || p.channel) || p.channel,
     }));
+
+    // 上游故障导致的「合法空源」：503 + Retry-After，阅读器会重试；
+    // 否则它们会把空结果当成功解析并缓存下来（表现为订阅内容为空）
+    if (!posts.length && (res.errors || []).length) {
+      throw upstreamBusy("上游频道抓取失败，稍后自动重试");
+    }
+
     const xml = renderRss({
-      title: `${res.channel.name} - ${general.siteTitle}`,
-      link: `${origin}/#/c/${encodeURIComponent(channelKey)}`,
-      description: res.channel.description || `${general.siteTitle} · ${res.channel.name}`,
-      selfHref: `${origin}/api/rss?channel=${encodeURIComponent(channelKey)}`,
+      title: general.siteTitle,
+      link: `${origin}/`,
+      description: `${general.siteTitle} · 聚合信息流（按发布时间倒序）`,
+      selfHref: `${origin}/rss.xml`,
       posts,
       origin,
     });
-    return xmlResponse(xml, maxAge);
+    return xmlResponse(xml, maxAge, authed);
+  } catch (err) {
+    throw mapRssError(err);
   }
-
-  const feedUrl = new URL(url);
-  feedUrl.searchParams.set("limit", String(limit));
-  const res = await getFeed(request, env, ctx, feedUrl, false);
-  const nameOf = new Map((res.channels || []).filter((c) => c && c.key).map((c) => [c.key, c.name]));
-  const posts = (res.posts || []).map((p) => ({
-    ...p,
-    channelName: nameOf.get(p.channelKey || p.channel) || p.channel,
-  }));
-  const xml = renderRss({
-    title: general.siteTitle,
-    link: `${origin}/`,
-    description: `${general.siteTitle} · 聚合信息流（按发布时间倒序）`,
-    selfHref: `${origin}/rss.xml`,
-    posts,
-    origin,
-  });
-  return xmlResponse(xml, maxAge);
 }

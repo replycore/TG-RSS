@@ -128,6 +128,13 @@ async function handleApi(request, env, ctx, url) {
     const body = await readBody(request);
     return await admin.login(request, env, body);
   }
+  if (path === "/api/admin/rss-token" && method === "GET") {
+    return json(await admin.rssTokenState(request, env));
+  }
+  if (path === "/api/admin/rss-token" && method === "POST") {
+    const body = await readBody(request);
+    return json(await admin.rssTokenAction(request, env, body));
+  }
   if (path === "/api/admin/logout" && method === "POST") {
     return await admin.logout(request, env);
   }
@@ -182,6 +189,7 @@ export async function handleRequest(request, env, ctx = {}) {
     if (err instanceof HttpError) {
       const headers = {};
       if (err.retryAfter) headers["retry-after"] = String(err.retryAfter);
+      if (err.headers && typeof err.headers === "object") Object.assign(headers, err.headers);
       return jsonError(err.status, err.message, err.code, headers);
     }
     console.error("[tg-rss] unhandled error:", err && err.stack ? err.stack : err);

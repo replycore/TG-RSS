@@ -654,6 +654,88 @@ function renderSecurity(body, ctx, settings) {
   };
   info.append(el("div", { class: "hint", text: "会话保存在 KV 中，有效期 7 天。" }), logout);
   body.append(info);
+
+  // ---- RSS 订阅令牌：带 token 读取私密/隐藏频道
+  const rssCard = el("div", { class: "card" });
+  rssCard.append(el("h2", { text: "RSS 订阅令牌" }));
+  rssCard.append(
+    el("div", {
+      class: "hint",
+      text: "启用后在订阅链接后加 ?token=…（或请求头 Authorization: Bearer …）即可读取私密/隐藏频道；不带令牌的源只含公开频道。令牌只存哈希，明文仅生成时显示一次，可随时轮换（旧链接立即失效）或吊销。",
+    }),
+  );
+  const rssStatus = el("div", { class: "hint" });
+  const rssUrlField = field("订阅链接（含令牌）", { placeholder: "尚未生成令牌" });
+  rssUrlField.input.readOnly = true;
+  const rssRow = el("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap", margin: "8px 0" } });
+  const genBtn = el("button", { class: "btn primary", type: "button", text: "生成 / 轮换令牌" });
+  const copyBtn = el("button", { class: "btn", type: "button", text: "复制链接" });
+  const revokeBtn = el("button", { class: "btn danger", type: "button", text: "吊销" });
+
+  const loadRssToken = async () => {
+    try {
+      const st = await api.rssToken();
+      rssStatus.textContent = st.enabled
+        ? `状态：已启用（${st.masked}）`
+        : "状态：未启用 —— 公开源正常，需要读取私密频道时先生成令牌";
+      if (!st.enabled) rssUrlField.input.value = "";
+    } catch (err) {
+      rssStatus.textContent = `状态读取失败：${err.message}`;
+    }
+  };
+
+  genBtn.onclick = async () => {
+    genBtn.disabled = true;
+    try {
+      const r = await api.rssTokenAction("rotate");
+      rssUrlField.input.value = r.url;
+      rssStatus.textContent = `状态：已启用（${r.masked}）`;
+      toast("已生成，明文仅此一次，请立即复制保存", "ok");
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      genBtn.disabled = false;
+    }
+  };
+
+  copyBtn.onclick = async () => {
+    const value = rssUrlField.input.value;
+    if (!value) return toast("请先生成令牌", "error");
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+        return toast("已复制订阅链接", "ok");
+      }
+      throw new Error("no clipboard");
+    } catch {
+      rssUrlField.input.select();
+      return toast("已选中，请手动复制", "error");
+    }
+  };
+
+  revokeBtn.onclick = async () => {
+    revokeBtn.disabled = true;
+    try {
+      await api.rssTokenAction("revoke");
+      rssUrlField.input.value = "";
+      toast("令牌已吊销，旧链接立即失效", "ok");
+      await loadRssToken();
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      revokeBtn.disabled = false;
+    }
+  };
+
+  rssRow.append(genBtn, copyBtn, revokeBtn);
+  rssCard.append(
+    rssStatus,
+    rssUrlField.node,
+    rssRow,
+    el("div", { class: "hint", text: "单频道源：把链接换成 /api/rss?channel=<频道key>&token=…；私密频道保存时会自动强制为「隐藏」。" }),
+  );
+  body.append(rssCard);
+  loadRssToken();
 }
 
 /* ---------------------------------------------------------------- 工具 */

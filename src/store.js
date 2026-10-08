@@ -12,6 +12,8 @@ export const KEYS = {
   cred: "admin:cred",
   session: "auth:sess:",
   rateLimit: "auth:limit:",
+  rssToken: "auth:rssToken",
+  rssTokenLimit: "auth:rssLimit:",
   meta: "channel:meta:",
   sync: "channel:sync:",
 };
@@ -135,7 +137,10 @@ export function validateChannel(input) {
   if (!/^-?\d{5,25}$/.test(tgId)) {
     return { error: "私密频道需要数字 ID（形如 -1001234567890）" };
   }
-  return { channel: normalizeChannel({ ...input, type, tgId }) };
+  const channel = normalizeChannel({ ...input, type, tgId });
+  // 私密频道强制隐藏：只对管理员会话或持有 RSS token 的请求可见
+  channel.hidden = true;
+  return { channel };
 }
 
 /* ------------------------------------------------------------ 频道元信息缓存 */

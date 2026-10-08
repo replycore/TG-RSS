@@ -33,7 +33,11 @@ export async function loadContext(env, request) {
 }
 
 export function visibleChannels(channels, authenticated) {
-  return channels.filter((ch) => ch.enabled !== false && (authenticated || !ch.hidden));
+  // 私密频道即使没勾「隐藏」也一律需要认证（登录会话或 RSS token），
+  // 否则元信息与桥接内容会经列表/信息流/RSS 公开流出
+  return channels.filter(
+    (ch) => ch.enabled !== false && (authenticated || (!ch.hidden && ch.type !== "private")),
+  );
 }
 
 export function findChannel(channels, key) {
@@ -42,7 +46,9 @@ export function findChannel(channels, key) {
 
 export function assertVisible(channel, authenticated) {
   if (!channel) throw new HttpError(404, "频道不存在", "channel_not_found");
-  if (channel.hidden && !authenticated) throw new HttpError(403, "该频道需要登录后查看", "hidden_channel");
+  if ((channel.hidden || channel.type === "private") && !authenticated) {
+    throw new HttpError(403, "该频道需要登录或有效令牌后查看", "hidden_channel");
+  }
   if (channel.enabled === false) throw new HttpError(404, "频道已停用", "channel_disabled");
 }
 
