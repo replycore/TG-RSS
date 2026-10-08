@@ -7,8 +7,12 @@
  *
  * 校验走 Cloudflare 官方 siteverify；网络失败时保守拒绝（fail-closed），
  * 避免验证服务不可用时登录口完全敞开。
+ *
+ * 注意：不传 remoteip。siteverify 的 remoteip 会和令牌生成时的出口 IP 强校验，
+ * 移动网络/代理换出口、或页面与提交走不同链路时会误杀合法用户
+ * （实测同源同会话也被拒，去掉后 success=true）。令牌本身已绑定站点并证明完成挑战。
  */
-import { HttpError, getClientIp } from "./util.js";
+import { HttpError } from "./util.js";
 
 const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
@@ -29,7 +33,7 @@ export async function verifyTurnstile(request, env, body) {
   const secret = env && env.TURNSTILE_SECRET;
   if (!secret) return { enabled: false, ok: true };
 
-  const token = String((body && body.turnstileToken) || "").slice(0, 512);
+  const token = String((body && body.turnstileToken) || "").slice(0, 2048);
   if (!token) {
     throw new HttpError(403, "请先完成人机验证", "turnstile_required");
   }
@@ -39,11 +43,7 @@ export async function verifyTurnstile(request, env, body) {
     const res = await fetch(SITEVERIFY_URL, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        secret,
-        response: token,
-        remoteip: getClientIp(request) || "",
-      }).toString(),
+      body: new URLSearchParams({ secret, response: token }).toString(),
     });
     data = await res.json();
   } catch (err) {
