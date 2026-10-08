@@ -74,7 +74,7 @@
 | `name` | ≤80 字符 | 显示名称 |
 | `order` | 整数 | 排序，越小越靠前 |
 | `hidden` | true / false | true = 未登录不可见 |
-| `mediaOnly` | true / false | 只出现在媒体模式 |
+| `mediaOnly` | true / false | 「仅媒体」：信息流与频道页只显示该频道带媒体的帖子，纯文字不显示；媒体模式照常收录 |
 | `enabled` | true / false | 是否参与抓取 |
 
 操作入口：后台 →「频道」→ 添加 / 测试连通 / 刷新 / 显示隐藏。

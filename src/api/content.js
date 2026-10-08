@@ -110,6 +110,43 @@ export async function loadChannelPage(env, ctx, channel, before = null, limit = 
   return { info, posts, next: parsed.nextBefore ?? null };
 }
 
+/** 帖子是否携带媒体（图片/视频/音频/文件任一） */
+export function postHasMedia(post) {
+  return Array.isArray(post.media) && post.media.length > 0;
+}
+
+/** 仅媒体频道连续翻页时的页数上限，避免纯文字频道一次请求打太多上游 */
+const MEDIA_ONLY_MAX_PAGES = 5;
+
+/**
+ * 「仅媒体」频道读页：只保留带媒体的帖子。
+ * 一页全是纯文字时继续沿游标向前翻，直到凑够 limit 条媒体帖或翻完
+ * （最多 MEDIA_ONLY_MAX_PAGES 页），避免整页被过滤空导致前端误判「到底了」。
+ * 返回结构与 loadChannelPage 一致；游标 next 指向已消费掉的位置。
+ */
+export async function loadMediaOnlyChannelPage(env, ctx, channel, before = null, limit = 20) {
+  let cursor = before;
+  let next = null;
+  let info = null;
+  const collected = [];
+  const seen = new Set();
+  for (let page = 0; page < MEDIA_ONLY_MAX_PAGES; page += 1) {
+    const result = await loadChannelPage(env, ctx, channel, cursor, limit);
+    info = info || result.info;
+    next = result.next;
+    for (const post of result.posts) {
+      if (!postHasMedia(post)) continue;
+      const id = post.id || `${post.channel}/${post.postId}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      collected.push(post);
+    }
+    if (collected.length >= limit || !result.next) break;
+    cursor = result.next;
+  }
+  return { info, posts: collected, next };
+}
+
 /* ---------------------------------------------------------------- GET /api/channels */
 
 export async function listChannels(request, env, ctx, url, authenticated) {
@@ -145,7 +182,10 @@ export async function getChannelPosts(request, env, ctx, url, key, authenticated
   const limit = clampInt(url.searchParams.get("limit"), 5, 50, general.pageSize || 20);
   const before = url.searchParams.get("before") || null;
 
-  const { info, posts: allPosts, next } = await loadChannelPage(env, ctx, channel, before, limit);
+  //「仅媒体」频道：无论频道页还是信息流，都只投放带媒体的帖子
+  const { info, posts: allPosts, next } = channel.mediaOnly
+    ? await loadMediaOnlyChannelPage(env, ctx, channel, before, limit)
+    : await loadChannelPage(env, ctx, channel, before, limit);
   // 与信息流一致的 #标签 过滤
   const tag = String(url.searchParams.get("tag") || "").replace(/^#/, "").trim().toLowerCase();
   const posts = tag
@@ -159,8 +199,8 @@ export async function getChannelPosts(request, env, ctx, url, key, authenticated
 export async function getFeed(request, env, ctx, url, authenticated) {
   const channels = await getChannels(env);
   const general = await getGeneral(env);
-  // mediaOnly 频道只出现在媒体模式与频道页，不进聚合信息流
-  const visible = visibleChannels(channels, authenticated).filter((ch) => !ch.mediaOnly);
+  //「仅媒体」频道保留在信息流里，但只投放带媒体的帖子（loadMediaOnlyChannelPage 过滤纯文字帖）
+  const visible = visibleChannels(channels, authenticated);
   const limit = clampInt(url.searchParams.get("limit"), 10, 120, Math.max(40, (general.pageSize || 20) * 3));
   const cap = clampInt(url.searchParams.get("n"), 1, MAX_FEED_CHANNELS, general.feedChannels || 6);
 
@@ -176,7 +216,9 @@ export async function getFeed(request, env, ctx, url, authenticated) {
     batch.map(async (ch) => {
       try {
         const before = typeof cursors[ch.key] === "string" ? cursors[ch.key] : null;
-        const page = await loadChannelPage(env, ctx, ch, before, general.pageSize || 20);
+        const page = ch.mediaOnly
+          ? await loadMediaOnlyChannelPage(env, ctx, ch, before, general.pageSize || 20)
+          : await loadChannelPage(env, ctx, ch, before, general.pageSize || 20);
         nextCursors[ch.key] = page.next ? String(page.next) : null;
         perChannel.push({ channel: page.info, posts: page.posts });
       } catch (err) {

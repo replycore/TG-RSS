@@ -382,9 +382,10 @@ function renderChannels(body, ctx, settings) {
         onclick: () => { ch.hidden = !ch.hidden; drawTable(); },
       });
       const mediaBtn = el("button", {
-        class: `btn sm ${ch.mediaOnly ? "" : ""}`,
+        class: `btn sm ${ch.mediaOnly ? "primary" : ""}`,
         type: "button",
         text: ch.mediaOnly ? "是" : "否",
+        title: "「是」= 该频道在信息流/频道页只显示带媒体的帖子（纯文字不显示）",
         onclick: () => { ch.mediaOnly = !ch.mediaOnly; drawTable(); },
       });
       const enabledBtn = el("button", {
