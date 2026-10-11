@@ -158,7 +158,18 @@ export async function fetchBridgeFeed(env, channel, before = null, limit = 20) {
     throw new HttpError(502, `桥接服务不可达：${err?.message || err}`, "bridge_unreachable");
   }
 
-  if (res.status === 401 || res.status === 403) throw new HttpError(502, "桥接服务拒绝访问", "bridge_denied");
+  if (res.status === 401 || res.status === 403) {
+    // 时钟差提示：bridge 401 响应带 serverTime，偏差超窗时最常见的原因是桥接机器时钟不对
+    let hint = "";
+    try {
+      const body = await res.json();
+      if (body && Number.isFinite(Number(body.serverTime))) {
+        const drift = Number(body.serverTime) - Math.floor(Date.now() / 1000);
+        if (Math.abs(drift) > 300) hint = `（bridge 时钟差约 ${drift}s，检查桥接机器 NTP）`;
+      }
+    } catch { /* 响应体非 JSON 则忽略 */ }
+    throw new HttpError(502, `桥接服务拒绝访问${hint}`, "bridge_denied");
+  }
   if (res.status === 404) throw new HttpError(404, "桥接服务找不到该频道", "channel_not_found");
   if (!res.ok) throw new HttpError(502, `桥接服务返回 ${res.status}`, "bridge_error");
 
@@ -188,6 +199,9 @@ export function normalizeBridgePost(post, channel) {
     size: m.size || null,
     duration: m.duration || null,
     permalink: m.permalink || null,
+    // 桥接媒体必须走站内代理：bridge 裸 URL 无认证会 401（v1.2.4 移除 ?token= 后），
+    // 浏览器也发不出签名头。proxyAll=false 只影响公开频道
+    forceProxy: true,
   }));
   return {
     id: post.id || `${slug}/${post.postId}`,
@@ -217,12 +231,18 @@ export function proxyUrlFor(targetUrl, settings) {
 export function decoratePostMedia(post, settings) {
   return {
     ...post,
-    media: (post.media || []).map((m) => ({
-      ...m,
-      src: proxyUrlFor(m.url, settings),
-      direct: m.url,
-      thumbSrc: proxyUrlFor(m.thumb, settings),
-      link: m.permalink || post.url,
-    })),
+    media: (post.media || []).map((m) => {
+      // 桥接媒体（forceProxy）无视 proxyAll=false 恒走代理——裸 bridge URL 无认证必 401
+      const eff = m.forceProxy ? { ...settings, proxyAll: true } : settings;
+      const out = { ...m };
+      delete out.forceProxy;
+      return {
+        ...out,
+        src: proxyUrlFor(m.url, eff),
+        direct: m.url,
+        thumbSrc: proxyUrlFor(m.thumb, eff),
+        link: m.permalink || post.url,
+      };
+    }),
   };
 }

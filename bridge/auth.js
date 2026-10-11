@@ -52,12 +52,14 @@ export function signPayload(token, timestamp, method, pathWithQuery) {
     .digest("base64");
 }
 
-export function verifySignature(url, req, token, nowSec = Math.floor(Date.now() / 1000)) {
+export function verifySignature(url, req, token, opts = {}) {
+  const nowSec = opts.nowSec ?? Math.floor(Date.now() / 1000);
+  const windowSec = Number(opts.windowSec) > 0 ? Number(opts.windowSec) : SIGN_WINDOW_SEC;
   const tsRaw = headerValue(req, "x-timestamp");
   const sig = headerValue(req, "x-signature");
   if (!tsRaw || !sig || !token) return false;
   const ts = Number(tsRaw);
-  if (!Number.isFinite(ts) || Math.abs(nowSec - ts) > SIGN_WINDOW_SEC) return false;
+  if (!Number.isFinite(ts) || Math.abs(nowSec - ts) > windowSec) return false;
   const method = String((req && req.method) || "GET").toUpperCase();
   const expected = Buffer.from(signPayload(token, tsRaw, method, url.pathname + url.search));
   const actual = Buffer.from(sig);
@@ -81,7 +83,7 @@ function originAllowed(req, allowedOrigins) {
 
 export function authorized(url, req, token, opts = {}) {
   if (!token) return true; // requireConfig 已强制必须配置 token，这里只是兜底
-  if (verifySignature(url, req, token)) return true;
+  if (verifySignature(url, req, token, opts)) return true;
   const allowed = opts.allowedOrigins || [];
   const header = headerValue(req, "authorization");
   if (header && equalString(header, `Bearer ${token}`) && originAllowed(req, allowed)) return true;

@@ -43,6 +43,8 @@ export const config = {
     .split(",")
     .map((s) => s.trim().replace(/\/+$/, ""))
     .filter(Boolean),
+  // 签名时间窗（秒）：机器时钟与 Cloudflare 偏差大时可放宽（默认 300，范围 60~3600）
+  signWindowSec: Math.min(3600, Math.max(60, Number(env.BRIDGE_SIGN_WINDOW_SEC) || 300)),
   cacheDir: env.CACHE_DIR
     ? path.resolve(env.CACHE_DIR)
     : path.join(here, "cache"),

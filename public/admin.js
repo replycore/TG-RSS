@@ -610,7 +610,7 @@ function renderMediaSettings(body, ctx, settings) {
   const image = checkbox("图片", m.image);
   const audio = checkbox("音频", m.audio);
   const file = checkbox("文件", m.file);
-  const proxyAll = checkbox("媒体走站内代理（私密频道与防盗链需要）", m.proxyAll);
+  const proxyAll = checkbox("媒体走站内代理（私密频道恒走代理；此开关只控制公开频道）", m.proxyAll);
   const pageSize = field("每页媒体数", { type: "number", value: m.pageSize, min: 6, max: 60 });
 
   card.append(

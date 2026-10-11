@@ -30,7 +30,8 @@ function mimeOf(file) {
   return MIME[ext] || "application/octet-stream";
 }
 
-/* 鉴权统一在 ./auth.js：支持 x-token 头 / Authorization: Bearer / ?token= */
+/* 鉴权统一在 ./auth.js：HMAC 签名（x-timestamp + x-signature）为主，
+   也兼容 x-token 头 / Authorization: Bearer；?token= 查询参数已移除（token 不进 URL/HTML） */
 
 function sendJson(res, status, data) {
   const body = JSON.stringify(data);
@@ -109,7 +110,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
   try {
     if (req.method === "OPTIONS") {
-      res.writeHead(204, { "access-control-allow-origin": "*", "access-control-allow-headers": "x-token", "access-control-allow-methods": "GET,OPTIONS" });
+      res.writeHead(204, { "access-control-allow-origin": "*", "access-control-allow-headers": "x-timestamp, x-signature", "access-control-allow-methods": "GET,OPTIONS" });
       res.end();
       return;
     }
@@ -119,8 +120,16 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (!authorized(url, req, config.token, { allowedOrigins: config.allowedOrigins })) {
-      sendJson(res, 401, { error: "invalid_token" });
+    if (!authorized(url, req, config.token, { allowedOrigins: config.allowedOrigins, windowSec: config.signWindowSec })) {
+      // 时钟差诊断：签名被拒时最常见的原因是 bridge 机器时钟与 Cloudflare 偏差超窗，
+      // 日志和响应都带上服务端时间，便于远程排查（响应体 serverTime 供 Worker 提示用）
+      const tsRaw = Array.isArray(req.headers?.["x-timestamp"]) ? null : req.headers?.["x-timestamp"];
+      const serverTime = Math.floor(Date.now() / 1000);
+      const drift = tsRaw && Number.isFinite(Number(tsRaw)) ? serverTime - Number(tsRaw) : null;
+      if (tsRaw) {
+        console.warn(`拒绝 ${req.method} ${url.pathname}：签名无效（服务端时间 ${serverTime}，签名时间 ${tsRaw}，差 ${drift}s，窗 ${config.signWindowSec}s）`);
+      }
+      sendJson(res, 401, { error: "invalid_token", serverTime });
       return;
     }
 

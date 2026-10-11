@@ -71,6 +71,17 @@ test("桥接鉴权：HMAC 签名（Worker 端 ↔ bridge 端往返）", async ()
   );
 });
 
+test("桥接鉴权：时间窗可通过 opts.windowSec 放宽（时钟偏差场景）", () => {
+  const token = "window-token";
+  const url = new URL("http://b/feed");
+  const oldTs = String(Math.floor(Date.now() / 1000) - 600); // 10 分钟前（默认窗外）
+  const sig = signPayload(token, oldTs, "GET", url.pathname + url.search);
+  const req = mkReq({ "x-timestamp": oldTs, "x-signature": sig });
+  assert.equal(verifySignature(url, req, token), false, "默认 300s 窗外拒绝");
+  assert.equal(verifySignature(url, req, token, { windowSec: 900 }), true, "放宽到 900s 后通过");
+  assert.equal(authorized(url, req, token, { windowSec: 900 }), true, "authorized 透传 windowSec");
+});
+
 test("桥接鉴权：真实 Node http headers（普通对象，无 .get）不抛错", () => {
   const token = "bridge-token-real";
   assert.equal(authorized(new URL("http://b/feed"), realReq({ "x-token": token }), token), true);

@@ -62,3 +62,22 @@ test("findChannel：大小写不敏感（#/c/Xiaomi 匹配 key=xiaomi）", async
   assert.equal(findChannel(channels, "nope"), null);
   assert.equal(findChannel(channels, 123), null, "非字符串 key 走精确匹配");
 });
+
+test("proxyAll=false：bridge 媒体仍恒走代理（裸 URL 无认证必 401），公开频道直链", async () => {
+  const { normalizeBridgePost, decoratePostMedia } = await import("../src/tg/fetcher.js");
+  const bridgePost = normalizeBridgePost(
+    { postId: 5, textPlain: "x", media: [{ type: "image", url: "https://bridge.example.com/avatar?ch=-1001&m=5" }] },
+    { key: "p1", username: null },
+  );
+  const settings = { proxyAll: false, types: {} };
+  const decorated = decoratePostMedia(bridgePost, settings);
+  assert.equal(decorated.media[0].src.startsWith("/api/media/proxy?u="), true, "proxyAll=false 时 bridge 媒体也必须代理");
+  assert.equal("forceProxy" in decorated.media[0], false, "内部标记不外泄到响应");
+
+  // 公开频道（无 forceProxy）在 proxyAll=false 时保持直链
+  const pub = decoratePostMedia(
+    { media: [{ type: "image", url: "https://cdn.example.com/a.jpg" }] },
+    settings,
+  );
+  assert.equal(pub.media[0].src, "https://cdn.example.com/a.jpg");
+});
