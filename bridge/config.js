@@ -37,6 +37,12 @@ export const config = {
   // 默认只监听本机：私密频道内容不应直接暴露在局域网，需要对外时设 BRIDGE_HOST=0.0.0.0
   host: String(env.BRIDGE_HOST || "127.0.0.1"),
   publicUrl: String(env.PUBLIC_URL || "").replace(/\/+$/, ""),
+  // 可选 Origin 白名单：逗号分隔的完整 origin（如 https://rss.example.com），
+  // 配置后仅约束「头认证」请求；签名请求不受影响
+  allowedOrigins: String(env.BRIDGE_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim().replace(/\/+$/, ""))
+    .filter(Boolean),
   cacheDir: env.CACHE_DIR
     ? path.resolve(env.CACHE_DIR)
     : path.join(here, "cache"),

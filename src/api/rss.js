@@ -84,12 +84,14 @@ export function itemTitle(post) {
   );
 }
 
-function enclosureOf(post) {
+function enclosureOf(post, origin = "") {
   const media = (post.media || []).find(
-    (m) => ["image", "video", "audio"].includes(m.type) && (m.direct || m.src),
+    (m) => ["image", "video", "audio"].includes(m.type) && (m.src || m.direct),
   );
   if (!media) return "";
-  const target = media.direct || media.src;
+  // 优先 src（站内代理路径）：私密频道直链 bridge 会 401；公开频道 proxyAll=false 时 src===direct
+  const raw = media.src || media.direct;
+  const target = raw.startsWith("/") ? `${origin}${raw}` : raw;
   const path = (() => {
     try { return new URL(target, "https://placeholder.invalid").pathname; } catch { return ""; }
   })();
@@ -113,7 +115,7 @@ function buildItem(post, opts = {}) {
   if (pubDate) lines.push(`  <pubDate>${pubDate}</pubDate>`);
   if (body) lines.push(`  <description>${body}</description>`);
   if (channelName) lines.push(`  <category>${escapeXml(channelName)}</category>`);
-  const enc = enclosureOf(post);
+  const enc = enclosureOf(post, origin);
   if (enc) lines.push(enc.trimEnd());
   lines.push("</item>");
   return lines.map((l) => (l.startsWith("  ") ? `    ${l.trimStart()}` : l)).join("\n");

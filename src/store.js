@@ -14,7 +14,8 @@ export const KEYS = {
   rateLimit: "auth:limit:",
   rssToken: "auth:rssToken",
   rssTokenLimit: "auth:rssLimit:",
-  meta: "channel:meta:",
+  // meta2：1.2.4 换前缀一次性作废旧缓存——旧缓存里的 bridge avatar URL 带 ?token=（泄露面）
+  meta: "channel:meta2:",
   sync: "channel:sync:",
 };
 
@@ -103,12 +104,15 @@ export function normalizeChannel(input) {
   const type = input.type === "private" ? "private" : "public";
   const username = type === "public" ? String(input.username || "").replace(/^@/, "") : "";
   const tgId = type === "private" ? String(input.tgId || "").replace(/^\+/, "") : "";
-  const key = type === "public" ? username.toLowerCase() : `p${tgId.replace(/^-/, "")}`;
+  // 历史正数脏数据归一化：Telegram 频道 ID 为负数形式，正数会被桥接端判成 PeerUser
+  // （validateChannel 已拒绝新增正数，这里兜住存量数据的读/存）
+  const tgIdNormalized = type === "private" && /^\d+$/.test(tgId) ? `-${tgId}` : tgId;
+  const key = type === "public" ? username.toLowerCase() : `p${tgIdNormalized.replace(/^-/, "")}`;
   return {
     key,
     type,
     username,
-    tgId,
+    tgId: tgIdNormalized,
     name: String(input.name || username || tgId || "未命名频道").slice(0, 80),
     order: Number.isFinite(input.order) ? input.order : 0,
     hidden: !!input.hidden,

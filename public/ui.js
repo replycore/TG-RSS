@@ -398,11 +398,12 @@ function renderFile(item, post, index) {
 
   const actions = el("div", { class: "row-actions" });
   // 私密频道（桥接）或已解析出直链时直接打开；公开频道预览页无直链，需要按需解析
-  if (item.direct || item.src) {
+  // 优先 src（站内代理路径）：私密频道 direct 是 bridge 裸地址，直开会 401
+  if (item.src || item.direct) {
     actions.append(
       el("a", {
         class: "btn sm",
-        href: item.direct || item.src,
+        href: item.src || item.direct,
         target: "_blank",
         rel: "noopener",
         text: "打开",

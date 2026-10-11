@@ -10,6 +10,7 @@ import {
   getClientIp,
 } from "../util.js";
 import { getGeneral, getMediaSettings, getChannels } from "../store.js";
+import { bridgeSignedHeaders } from "../bridge-sign.js";
 import { loadChannelPage, visibleChannels, findChannel, assertVisible } from "./content.js";
 import { resolveBridge, fetchPublicChannelPage } from "../tg/fetcher.js";
 import { parseSingleMessage } from "../tg/parser.js";
@@ -336,7 +337,11 @@ export async function proxyMedia(request, env, ctx, url) {
   const headers = new Headers({ "user-agent": UA, accept: "*/*" });
   const range = request.headers.get("range");
   if (range) headers.set("range", range);
-  if (isBridge && bridge.token) headers.set("x-token", bridge.token);
+  if (isBridge && bridge.token) {
+    // HMAC 签名认证（token 不进请求，见 src/bridge-sign.js）
+    const sig = await bridgeSignedHeaders(bridge, "GET", target.pathname + target.search);
+    for (const [k, v] of Object.entries(sig)) headers.set(k, v);
+  }
 
   const cache = getCache();
   const cacheKey = new Request(`https://tg-rss-media.invalid/${b64urlEncode(target.toString())}`, {

@@ -2,7 +2,7 @@
 
 import { Api } from "teleproto";
 import { getClient, fileNameOf, guessExtension } from "./client.js";
-import { baseUrl, config } from "./config.js";
+import { baseUrl } from "./config.js";
 import { escapeHtml } from "../src/util.js";
 
 /**
@@ -17,11 +17,8 @@ export function peerKeyArg(peer) {
   if (/^\d+$/.test(s)) return `-100${s}`;
   return s;
 }
-
-/** <img>/<video> 直接引用 bridge URL 时没有 x-token 头，URL 必须自带 ?token= */
-function tokenQuery() {
-  return config.token ? `&token=${encodeURIComponent(config.token)}` : "";
-}
+// 注：媒体/头像 URL 不再拼 ?token=——token 曾随 <img> 直链进 HTML 造成泄露。
+// 现在一律经 TG-RSS Worker 代理（服务端注入签名头），浏览器不直连 bridge。
 
 const VIDEO_EXT = ["mp4", "webm", "mov", "mkv", "m4v"];
 const AUDIO_EXT = ["mp3", "m4a", "aac", "ogg", "oga", "opus", "wav", "flac"];
@@ -93,7 +90,7 @@ export function mediaOf(msg, peer) {
   if (!type) return [];
 
   const base = baseUrl();
-  const url = `${base}/media?ch=${encodeURIComponent(peerKeyArg(peer))}&m=${msg.id}${tokenQuery()}`;
+  const url = `${base}/media?ch=${encodeURIComponent(peerKeyArg(peer))}&m=${msg.id}`;
   return [
     {
       type,
@@ -133,7 +130,7 @@ export async function peerInfo(entity) {
   const info = {
     title: entity.title || entity.firstName || "频道",
     username: entity.usernames?.[0]?.activeUsername || entity.username || null,
-    avatar: `${base}/avatar?ch=${encodeURIComponent(peerKeyArg(entity))}${tokenQuery()}`,
+    avatar: `${base}/avatar?ch=${encodeURIComponent(peerKeyArg(entity))}`,
     description: "",
     counters: {},
   };

@@ -119,7 +119,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (!authorized(url, req, config.token)) {
+    if (!authorized(url, req, config.token, { allowedOrigins: config.allowedOrigins })) {
       sendJson(res, 401, { error: "invalid_token" });
       return;
     }
@@ -162,8 +162,17 @@ const server = http.createServer(async (req, res) => {
 
 async function main() {
   requireConfig();
+  // 对外监听但没配 PUBLIC_URL：帖子媒体/头像 URL 会写成 127.0.0.1，浏览器侧不可达——直接拒绝启动
+  const listeningPublic = config.host !== "127.0.0.1" && config.host !== "localhost";
+  if (listeningPublic && !config.publicUrl) {
+    throw new Error("BRIDGE_HOST 对外监听时必须设置 PUBLIC_URL（浏览器要通过它访问媒体/头像）");
+  }
   const me = await getMe();
   fs.mkdirSync(config.cacheDir, { recursive: true });
+  // 启动清扫：中断下载残留的 .part（不再被同名媒体请求的会永远占着磁盘）
+  for (const f of fs.readdirSync(config.cacheDir)) {
+    if (f.endsWith(".part")) fs.rmSync(path.join(config.cacheDir, f), { force: true });
+  }
 
   server.listen(config.port, config.host, async () => {
     console.log(`TG-RSS bridge listening on ${baseUrl()} （监听 ${config.host}:${config.port}）`);

@@ -1,11 +1,22 @@
 /**
  * 桥接访问鉴权
  *
- * 支持三种传法（都对应同一个 BRIDGE_TOKEN）：
- *   1. x-token 请求头        ← TG-RSS Worker 实际使用的方式（关键）
- *   2. Authorization: Bearer <token>
- *   3. ?token=<token> 查询参数（媒体 URL 需要能被 <img> 直接引用时用）
+ * 认证方式（按优先级）：
+ *   1. HMAC 签名 ← TG-RSS Worker 默认方式。token 不出现在任何请求/URL 中：
+ *        x-timestamp : Unix 秒
+ *        x-signature : base64(HMAC-SHA256(token, `${ts}\n${METHOD}\n${path}?${query}`))
+ *      时间窗 ±300s 且绑定方法+完整路径——单次请求在网络/日志里泄露也无法跨路径或过窗重放。
+ *   2. x-token 请求头 / Authorization: Bearer <token>（旧版 Worker 兼容、curl 调试）
+ *   3. Origin 白名单（可选 BRIDGE_ALLOWED_ORIGINS）：仅约束「头认证」请求——
+ *      签名请求已证明持有 token 不再要求；未配置则不限制
+ *
+ * 已移除 ?token= 查询参数支持：媒体/头像一律经 TG-RSS Worker 代理（服务端注入认证头），
+ * 浏览器不再直连 bridge，token 从根上不进 HTML/URL。
  */
+import crypto from "node:crypto";
+
+/** 签名时间窗（秒） */
+export const SIGN_WINDOW_SEC = 300;
 
 /** 恒定时间比较，避免按响应时间逐字节爆破 token */
 export function equalString(a, b) {
@@ -33,13 +44,48 @@ function headerValue(req, name) {
   return value == null ? "" : String(value);
 }
 
-export function authorized(url, req, token) {
+/** 签名载荷：`${ts}\n${METHOD}\n${path}?query`（与 Worker 端 src/bridge-sign.js 约定一致） */
+export function signPayload(token, timestamp, method, pathWithQuery) {
+  return crypto
+    .createHmac("sha256", String(token))
+    .update(`${timestamp}\n${method}\n${pathWithQuery}`)
+    .digest("base64");
+}
+
+export function verifySignature(url, req, token, nowSec = Math.floor(Date.now() / 1000)) {
+  const tsRaw = headerValue(req, "x-timestamp");
+  const sig = headerValue(req, "x-signature");
+  if (!tsRaw || !sig || !token) return false;
+  const ts = Number(tsRaw);
+  if (!Number.isFinite(ts) || Math.abs(nowSec - ts) > SIGN_WINDOW_SEC) return false;
+  const method = String((req && req.method) || "GET").toUpperCase();
+  const expected = Buffer.from(signPayload(token, tsRaw, method, url.pathname + url.search));
+  const actual = Buffer.from(sig);
+  // 等长才比较（timingSafeEqual 对不等长抛错）
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+/** Origin 白名单（仅头认证请求使用）：比较 URL 的 origin（scheme://host[:port]） */
+function originAllowed(req, allowedOrigins) {
+  if (!allowedOrigins || !allowedOrigins.length) return true;
+  const raw = headerValue(req, "origin") || headerValue(req, "referer");
+  if (!raw) return false;
+  let origin;
+  try {
+    origin = new URL(raw).origin;
+  } catch {
+    return false;
+  }
+  return allowedOrigins.includes(origin);
+}
+
+export function authorized(url, req, token, opts = {}) {
   if (!token) return true; // requireConfig 已强制必须配置 token，这里只是兜底
+  if (verifySignature(url, req, token)) return true;
+  const allowed = opts.allowedOrigins || [];
   const header = headerValue(req, "authorization");
-  if (header && equalString(header, `Bearer ${token}`)) return true;
+  if (header && equalString(header, `Bearer ${token}`) && originAllowed(req, allowed)) return true;
   const xToken = headerValue(req, "x-token");
-  if (xToken && equalString(xToken, token)) return true;
-  const q = url.searchParams.get("token");
-  if (q && equalString(q, token)) return true;
+  if (xToken && equalString(xToken, token) && originAllowed(req, allowed)) return true;
   return false;
 }

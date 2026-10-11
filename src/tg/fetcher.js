@@ -6,6 +6,7 @@
 import { HttpError, absoluteUrl, b64urlEncode } from "../util.js";
 import { parseChannelPage } from "./parser.js";
 import { getBridgeSettings, getChannelMeta, putChannelMeta } from "../store.js";
+import { bridgeSignedHeaders } from "../bridge-sign.js";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -148,8 +149,9 @@ export async function fetchBridgeFeed(env, channel, before = null, limit = 20) {
 
   let res;
   try {
+    // HMAC 签名认证：token 只作为签名密钥，不出现在请求里（见 src/bridge-sign.js）
     res = await fetch(url.toString(), {
-      headers: bridge.token ? { "x-token": bridge.token } : {},
+      headers: await bridgeSignedHeaders(bridge, "GET", url.pathname + url.search),
     });
   } catch (err) {
     throw new HttpError(502, `桥接服务不可达：${err?.message || err}`, "bridge_unreachable");
@@ -167,7 +169,8 @@ export async function fetchBridgeFeed(env, channel, before = null, limit = 20) {
     channel: {
       title: data.channel?.title || channel.name,
       username: data.channel?.username || channel.username || null,
-      avatar: absoluteUrl(data.channel?.avatar) || null,
+      // avatar 走 Worker 代理：bridge 裸 URL 无认证会被拒（token 不进 URL/HTML）
+      avatar: data.channel?.avatar ? proxyUrlFor(absoluteUrl(data.channel?.avatar), { proxyAll: true }) || null : null,
       description: data.channel?.description || "",
       counters: data.channel?.counters || {},
     },

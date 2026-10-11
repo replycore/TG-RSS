@@ -345,6 +345,9 @@ function normalizeChannelInput(raw) {
   if (!input) return "";
   const tg = /tg:\/\/(?:resolve)?\?[^#]*\bdomain=([^&#]+)/i.exec(input);
   if (tg) return cleanUsername(tg[1]);
+  // 其余 tg:// 形式（tg://join?invite=… 等）不是公开频道——与 src/util.js 后端版一致，
+  // 否则前端预览显示正常、点保存才被后端 400 打回
+  if (/^tg:\/\//i.test(input)) return null;
   let s = input;
   s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
   s = s.replace(/^(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)\.?/i, "");

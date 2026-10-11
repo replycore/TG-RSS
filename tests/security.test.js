@@ -65,30 +65,33 @@ test("Turnstile：未配置 secret 时整体跳过（向后兼容）", async () 
   assert.equal(r.ok, true);
 });
 
-test("Turnstile：配置 secret 后缺令牌直接 403", async () => {
+test("Turnstile：启用状态（双配）下缺令牌直接 403", async () => {
+  // 注意：启用判定要求 SECRET+SITE_KEY 双配（见 turnstile.js；单配 SECRET 视为未启用，
+  // 专项语义在 tests/turnstile.test.js）
   await assert.rejects(
-    () => verifyTurnstile(mkReq(), { TURNSTILE_SECRET: "s3cret" }, {}),
+    () => verifyTurnstile(mkReq(), { TURNSTILE_SECRET: "s3cret", TURNSTILE_SITE_KEY: "0xSITE" }, {}),
     (err) => err.status === 403 && err.code === "turnstile_required",
   );
 });
 
 test("Turnstile：siteverify 成功/失败/网络故障", async () => {
+  const env = { TURNSTILE_SECRET: "s", TURNSTILE_SITE_KEY: "0xSITE" };
   const realFetch = globalThis.fetch;
   try {
     globalThis.fetch = async () => ({ json: async () => ({ success: false }) });
     await assert.rejects(
-      () => verifyTurnstile(mkReq(), { TURNSTILE_SECRET: "s" }, { turnstileToken: "tok" }),
+      () => verifyTurnstile(mkReq(), env, { turnstileToken: "tok" }),
       (err) => err.code === "turnstile_failed",
     );
 
     globalThis.fetch = async () => ({ json: async () => ({ success: true }) });
-    const ok = await verifyTurnstile(mkReq(), { TURNSTILE_SECRET: "s" }, { turnstileToken: "tok" });
+    const ok = await verifyTurnstile(mkReq(), env, { turnstileToken: "tok" });
     assert.equal(ok.enabled, true);
 
     // fail-closed：验证服务挂了也不能放行
     globalThis.fetch = async () => { throw new Error("network down"); };
     await assert.rejects(
-      () => verifyTurnstile(mkReq(), { TURNSTILE_SECRET: "s" }, { turnstileToken: "tok" }),
+      () => verifyTurnstile(mkReq(), env, { turnstileToken: "tok" }),
       (err) => err.code === "turnstile_error",
     );
   } finally {

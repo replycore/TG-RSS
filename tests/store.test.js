@@ -11,6 +11,7 @@ import {
   createSession,
   getSession,
   destroySession,
+  bumpAuthEpoch,
   checkRateLimit,
   bumpRateLimit,
   saveChannels,
@@ -171,7 +172,6 @@ test("validateChannel：私密 tgId 必须负数（防 ± 同 key 的形同校�
 
 test("会话纪元：bump 后所有旧会话失效（改密码批量注销）", async () => {
   const e = env();
-  const { bumpAuthEpoch } = await import("../src/store.js");
   const token = await createSession(e, { username: "root" });
   const tOther = await createSession(e, { username: "root" });
   assert.ok(await getSession(e, token));
@@ -181,4 +181,14 @@ test("会话纪元：bump 后所有旧会话失效（改密码批量注销）", 
   assert.equal(await getSession(e, tOther), null, "旧会话 2（攻击者持有）也必须失效");
   const fresh = await createSession(e, { username: "root" });
   assert.ok(await getSession(e, fresh), "纪元 bump 后新建的会话有效");
+});
+
+test("normalizeChannel：历史正数 tgId 读时归一化为负数（存量脏数据迁移）", () => {
+  // 正数与负数同 key（p<无符号>），存量行的 key 不变，但 tgId 字段必须转负——
+  // 否则发给 bridge 依然被判成 PeerUser
+  const norm = normalizeChannel({ type: "private", tgId: "1001234567890", name: "旧频道" });
+  assert.equal(norm.tgId, "-1001234567890");
+  assert.equal(norm.key, "p1001234567890", "key 与负数版一致，迁移无破坏");
+  // 负数原样、非数字原样
+  assert.equal(normalizeChannel({ type: "private", tgId: "-1001234567890" }).tgId, "-1001234567890");
 });
