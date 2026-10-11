@@ -40,20 +40,55 @@ export async function renderAdmin(root, ctx, tab = "general") {
   root.append(head);
 
   const tabs = el("div", { class: "tabs" });
-  TABS.forEach((t) => tabs.append(el("a", { href: `#/admin/${t.key}`, class: t.key === tab ? "active" : "", text: t.label })));
+  const links = {};
+  TABS.forEach((t) => {
+    links[t.key] = el("a", {
+      href: `#/admin/${t.key}`,
+      class: t.key === tab ? "active" : "",
+      text: t.label,
+      // Tab 切换不经过 hash 路由：只重绘下方 body 区，已拉取的 settings 复用，
+      // 不再整页清空 + 重拉 adminState/settings（解决每次切 tab 都"刷新一次"的问题）
+      onclick: (e) => {
+        e.preventDefault();
+        if (currentTab === t.key) return;
+        // 直接切 URL（replaceState 不触发 hashchange），保证刷新/后退回到该 tab
+        try { history.replaceState(null, "", `#/admin/${t.key}`); } catch { /* 非浏览器环境忽略 */ }
+        switchTab(t.key);
+      },
+    });
+    tabs.append(links[t.key]);
+  });
   root.append(tabs);
 
   const body = el("div");
   root.append(body);
 
-  try {
-    const settings = await api.settings();
-    ctx.state.settings = settings;
-    if (tab === "channels") return renderChannels(body, ctx, settings);
-    if (tab === "media") return renderMediaSettings(body, ctx, settings);
-    if (tab === "bridge") return renderBridge(body, ctx, settings);
-    if (tab === "security") return renderSecurity(body, ctx, settings);
+  let currentTab = tab;
+  let settings = null;
+
+  function renderBody() {
+    clear(body);
+    if (currentTab === "channels") return renderChannels(body, ctx, settings);
+    if (currentTab === "media") return renderMediaSettings(body, ctx, settings);
+    if (currentTab === "bridge") return renderBridge(body, ctx, settings);
+    if (currentTab === "security") return renderSecurity(body, ctx, settings);
     return renderGeneral(body, ctx, settings);
+  }
+
+  function switchTab(key) {
+    currentTab = key;
+    for (const [k, link] of Object.entries(links)) link.classList.toggle("active", k === key);
+    try {
+      renderBody();
+    } catch (err) {
+      body.append(el("div", { class: "errorbox", text: err.message }));
+    }
+  }
+
+  try {
+    settings = await api.settings();
+    ctx.state.settings = settings;
+    renderBody();
   } catch (err) {
     if (err.status === 401) {
       ctx.state.authenticated = false;
@@ -247,6 +282,7 @@ function renderGeneral(body, ctx, settings) {
           showViews: showViews.input.checked,
           showDate: showDate.input.checked,
           theme: theme.select.value,
+          adTagsExtra: parseAdTagsInput(adTags.input.value),
         },
       });
       ctx.state.config = { ...ctx.state.config, siteTitle: title.input.value, theme: theme.select.value, showViews: showViews.input.checked, showDate: showDate.input.checked };
@@ -262,6 +298,37 @@ function renderGeneral(body, ctx, settings) {
 
   card.append(grid, opts, save);
   body.append(card);
+
+  // 广告过滤：内置标签只读展示（不可删），自定义标签可追加（逗号/空格/换行分隔，最多 64 个）
+  const adTags = field("自定义广告标签（逗号 / 空格 / 换行分隔）", {
+    value: (g.adTagsExtra || []).join(", "),
+    placeholder: "如：福利, 返利, coupon",
+  });
+  const adCard = el("div", { class: "card" });
+  const builtin = ["广告", "廣告", "推广", "推廣", "赞助", "贊助", "ad", "ads", "advert", "advertisement", "sponsor", "sponsored", "promo", "aff"];
+  adCard.append(
+    el("h2", { text: "广告过滤" }),
+    el("div", { class: "hint", text: "帖子正文带任一标签即全局隐藏（信息流 / 频道页 / RSS 均不投放）。内置标签不可删，自定义标签与内置取并集判定。" }),
+    el("div", { class: "hint", text: `内置标签：${builtin.map((t) => `#${t}`).join(" ")}` }),
+    adTags.node,
+  );
+  body.append(adCard);
+}
+
+/** 解析自定义广告标签输入：逗号/空格/换行/顿号分隔，剥 # 前缀，去重（大小写不敏感） */
+function parseAdTagsInput(raw) {
+  const seen = new Set();
+  const out = [];
+  for (const part of String(raw || "").split(/[,\s，、;；\n]+/)) {
+    const item = part.replace(/^[#＃]+/, "").trim().slice(0, 32);
+    if (!item) continue;
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+    if (out.length >= 64) break;
+  }
+  return out;
 }
 
 function feedChannelNode(f) { return f.node; }

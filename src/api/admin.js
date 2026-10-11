@@ -139,6 +139,22 @@ export async function saveSettings(request, env, body) {
     general.showViews = !!general.showViews;
     general.showDate = !!general.showDate;
     general.theme = ["auto", "light", "dark"].includes(general.theme) ? general.theme : "auto";
+    // 自定义广告标签：数组，每项转字符串后截断、上限 64 项；空串丢弃
+    if (general.adTagsExtra !== undefined) {
+      const list = Array.isArray(general.adTagsExtra) ? general.adTagsExtra : [general.adTagsExtra];
+      const cleaned = [];
+      const seen = new Set();
+      for (const raw of list) {
+        const item = String(raw ?? "").trim().slice(0, 32);
+        if (!item) continue;
+        const key = item.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        cleaned.push(item);
+        if (cleaned.length >= 64) break;
+      }
+      general.adTagsExtra = cleaned;
+    }
     await writeJSON(env, KEYS.general, general);
   }
 

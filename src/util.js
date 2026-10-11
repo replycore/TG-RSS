@@ -429,11 +429,11 @@ export function extractTags(text) {
 }
 
 /**
- * 广告标签集合：帖子带任一标签即被判定为广告并全局隐藏
+ * 内置广告标签集合（默认关键词）：帖子带任一标签即被判定为广告并全局隐藏
  * （信息流 / 频道页 / RSS 均不投放）。小写精确匹配，与 extractTags 产出对齐。
- * 中英双语 + 常见推广缩写；需要增删改这里即可。
+ * 中英双语 + 常见推广缩写；不可删，如需追加请用「常规」页面的「自定义广告标签」。
  */
-const AD_TAGS = new Set([
+export const AD_TAGS = new Set([
   "广告", "廣告", "推广", "推廣", "赞助", "贊助",
   "ad", "ads", "advert", "advertisement", "sponsor", "sponsored", "promo", "aff",
 ]);
@@ -446,8 +446,21 @@ export function normalizeTag(tag) {
     .toLowerCase();
 }
 
-/** 帖子是否被标记为广告（tags 命中广告标签集合） */
-export function isAdPost(post) {
+/**
+ * 帖子是否被标记为广告（tags 命中广告标签集合）。
+ * @param {object} post 帖子对象
+ * @param {string[]} [extraTags] 用户在后台「常规」页追加的自定义广告标签（与内置集合取并集）
+ */
+export function isAdPost(post, extraTags = []) {
   const tags = Array.isArray(post?.tags) ? post.tags : [];
-  return tags.some((t) => AD_TAGS.has(normalizeTag(t)));
+  if (!tags.length) return false;
+  const norm = (v) => normalizeTag(v);
+  const has = (needle) => tags.some((t) => norm(t) === needle);
+  if ([...AD_TAGS].some((needle) => has(needle))) return true;
+  if (!Array.isArray(extraTags)) return false;
+  for (const raw of extraTags) {
+    const needle = norm(raw);
+    if (needle && has(needle)) return true;
+  }
+  return false;
 }
