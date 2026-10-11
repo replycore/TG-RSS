@@ -149,7 +149,8 @@ export async function fetchBridgeFeed(env, channel, before = null, limit = 20) {
 
   let res;
   try {
-    // HMAC 签名认证：token 只作为签名密钥，不出现在请求里（见 src/bridge-sign.js）
+    // HMAC 签名认证：token 只作为签名密钥，不出现在请求里（见 src/bridge-sign.js）。
+    // bridge 端需同步更新（旧版只认 x-token 头，签名会被拒）
     res = await fetch(url.toString(), {
       headers: await bridgeSignedHeaders(bridge, "GET", url.pathname + url.search),
     });
