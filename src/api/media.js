@@ -105,6 +105,7 @@ export async function getMediaList(request, env, ctx, url, authenticated) {
   // ---- 游标回退（与 getFeed 同根）：slice 截掉的媒体帖，游标不得越过 ----
   // kept 的 post.id 集合；对每频道按「帖」粒度判断截断，回退到最后保留的媒体帖
   const keptPostIds = new Set(kept.map((it) => String(it.post?.id ?? "")));
+  const keptSet = new Set(kept.map((it) => it.id));
   for (const [key, mediaPosts] of mediaPostsByChannel) {
     if (!(key in nextCursors) || !mediaPosts.length) continue;
     const keptPosts = mediaPosts.filter((p) => keptPostIds.has(String(p.id ?? "")));
@@ -116,7 +117,16 @@ export async function getMediaList(request, env, ctx, url, authenticated) {
       continue;
     }
     const lastKept = keptPosts[keptPosts.length - 1];
-    if (lastKept.postId != null) nextCursors[key] = String(lastKept.postId);
+    if (lastKept.postId != null) {
+      // 边界帖若只投放了部分媒体（截断点落在帖子内部），游标取 postId+1
+      // 把整帖重取回来；重复的 item 前端按 id 去重。
+      // 否则该帖没投放的媒体会被 before 排除，永久丢失。
+      const lastKeptId = String(lastKept.id ?? "");
+      const partial = items.some(
+        (it) => String(it.post?.id ?? "") === lastKeptId && !keptSet.has(it.id),
+      );
+      nextCursors[key] = String(lastKept.postId + (partial ? 1 : 0));
+    }
   }
 
   return {

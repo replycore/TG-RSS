@@ -143,3 +143,56 @@ test("getMediaList：limit 截断时按帖粒度回退游标", async () => {
     globalThis.fetch = realFetch;
   }
 });
+
+test("getMediaList：截断点落在帖子内部（一帖双视频）→ 游标 postId+1，下页整帖拿回", async () => {
+  const chanAVids = [504, 503, 502, 501, 500]; // 5 条视频，date 全新
+  const chanAPage1 = `<html><body>${chanAVids.map((id, i) => `<div class="tgme_widget_message js-widget_message" data-post="chana/${id}" data-view="x">
+  <time datetime="2024-05-0${5 - i}T10:00:00+00:00"></time>
+  <video src="https://cdn1.telesco.pe/file/${id}.mp4" class="tgme_widget_message_video js-message_video" width="100%" height="100%" preload muted autoplay loop playsinline></video>
+  <div class="tgme_widget_message_text js-message_text">a ${id}</div>
+</div>`).join("")}<a class="tme_messages_more" data-before="500" href="https://t.me/s/chana?before=500">Load more</a></body></html>`;
+  // multib：402 帖带 2 个视频 + 401 帖 1 个视频；before=403 → exclusive 语义下仍返回 402/401
+  const multibPage = `<html><body><div class="tgme_widget_message js-widget_message" data-post="multib/402" data-view="x">
+  <time datetime="2024-03-05T10:00:00+00:00"></time>
+  <video src="https://cdn1.telesco.pe/file/402a.mp4" class="tgme_widget_message_video js-message_video" width="100%" height="100%" preload muted autoplay loop playsinline></video>
+  <video src="https://cdn1.telesco.pe/file/402b.mp4" class="tgme_widget_message_video js-message_video" width="100%" height="100%" preload muted autoplay loop playsinline></video>
+  <div class="tgme_widget_message_text js-message_text">双视频帖</div>
+</div><div class="tgme_widget_message js-widget_message" data-post="multib/401" data-view="x">
+  <time datetime="2024-03-04T10:00:00+00:00"></time>
+  <video src="https://cdn1.telesco.pe/file/401.mp4" class="tgme_widget_message_video js-message_video" width="100%" height="100%" preload muted autoplay loop playsinline></video>
+  <div class="tgme_widget_message_text js-message_text">单视频帖</div>
+</div><a class="tme_messages_more" data-before="401" href="https://t.me/s/multib?before=401">Load more</a></body></html>`;
+
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    let html;
+    if (u.includes("/s/chana")) html = u.includes("before=") ? EMPTY_PAGE : chanAPage1;
+    else if (u.includes("/s/multib")) html = u.includes("before=401") ? EMPTY_PAGE : multibPage;
+    else html = EMPTY_PAGE;
+    return { ok: true, status: 200, text: async () => html, headers: new Map() };
+  };
+  try {
+    const env = mockEnv([
+      { key: "chana", type: "public", username: "chana", name: "A", order: 0 },
+      { key: "multib", type: "public", username: "multib", name: "M", order: 1 },
+    ], GENERAL);
+    // 第一页 limit=6：保留 chanA 5 条 + multib/402 的第 1 个视频（第 6 位）→
+    // 截断切在 402 帖内部（402#1 和 401 被截）→ multib 游标必须 402+1=403 而非 402
+    const p1 = await getMediaList({}, env, {}, new URL("https://x/api/media?type=video&limit=6"), false);
+    assert.equal(p1.items.length, 6);
+    assert.ok(p1.items.some((it) => it.id === "multib/402#0"), "边界帖第 1 个视频在第一页");
+    assert.ok(!p1.items.some((it) => it.id === "multib/402#1"), "第 2 个视频被截断");
+    assert.equal(p1.cursors.multib, "403", "截断点在帖内 → postId+1（before exclusive，+1 才能整帖重取）");
+    assert.equal(p1.cursors.chana, "500", "chana 全保留 → 推进 page.next");
+
+    // 第二页：before=403（exclusive）→ 402 整帖重新出现 → 第 2 个视频拿回（修复前 before=402 会永久丢失）
+    const c = encodeState(p1.cursors);
+    const p2 = await getMediaList({}, env, {}, new URL(`https://x/api/media?type=video&limit=6&c=${c}`), false);
+    assert.ok(p2.items.some((it) => it.id === "multib/402#1"), "第二页必须拿回边界帖第 2 个视频");
+    assert.ok(p2.items.some((it) => it.id === "multib/401#0"), "401 也拿回");
+    assert.equal(p2.cursors.multib, "401", "第二页全保留 → 推进");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
