@@ -273,7 +273,7 @@ function renderGeneral(body, ctx, settings) {
   save.onclick = async () => {
     save.disabled = true;
     try {
-      await api.saveSettings({
+      const res = await api.saveSettings({
         general: {
           siteTitle: title.input.value,
           pageSize: Number(pageSize.input.value),
@@ -285,6 +285,8 @@ function renderGeneral(body, ctx, settings) {
           adTagsExtra: parseAdTagsInput(adTags.input.value),
         },
       });
+      // 回写内存 settings（后端返回完整新 settings）：切 tab 重绘不再显示旧值
+      Object.assign(settings, res);
       ctx.state.config = { ...ctx.state.config, siteTitle: title.input.value, theme: theme.select.value, showViews: showViews.input.checked, showDate: showDate.input.checked };
       document.getElementById("site-title").textContent = title.input.value;
       ctx.applyTheme(theme.select.value);
@@ -619,7 +621,7 @@ function renderMediaSettings(body, ctx, settings) {
   save.onclick = async () => {
     save.disabled = true;
     try {
-      await api.saveSettings({
+      const res = await api.saveSettings({
         media: {
           video: video.input.checked,
           image: image.input.checked,
@@ -629,6 +631,8 @@ function renderMediaSettings(body, ctx, settings) {
           pageSize: Number(pageSize.input.value),
         },
       });
+      // 回写内存 settings：切 tab 重绘显示新值
+      Object.assign(settings, res);
       ctx.state.config = {
         ...ctx.state.config,
         media: { video: video.input.checked, image: image.input.checked, audio: audio.input.checked, file: file.input.checked, pageSize: Number(pageSize.input.value) },
@@ -680,7 +684,9 @@ function renderBridge(body, ctx, settings) {
     try {
       const body2 = { bridge: { url: url.input.value.trim(), enabled: enabled.input.checked } };
       if (token.input.value) body2.bridge.token = token.input.value;
-      await api.saveSettings(body2);
+      const res = await api.saveSettings(body2);
+      // 回写内存 settings：切 tab 重绘时 b.hasToken / url / enabled 状态行才是新值
+      Object.assign(settings, res);
       toast("已保存", "ok");
     } catch (err) {
       toast(err.message, "error");

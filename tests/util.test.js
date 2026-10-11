@@ -157,6 +157,10 @@ test("normalizeChannelInput：兼容各种分享链接", () => {
   eq(normalizeChannelInput("https://t.me/joinchat/AAAAAE"), null);
   eq(normalizeChannelInput("https://t.me/c/1234567890/42"), null);
   eq(normalizeChannelInput("!!"), null);
+  // tg:// 形式：只有 domain= 是公开频道，其余（tg://join?invite= 等）拒绝
+  // ——不能掉进通用路径把 "join" 当用户名解析
+  eq(normalizeChannelInput("tg://join?invite=AAAA"), null);
+  eq(normalizeChannelInput("TG://JOIN?INVITE=AAAA"), null);
 });
 
 test("extractTags：抽取消息里的 #话题 标签", () => {

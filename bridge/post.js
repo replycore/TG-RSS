@@ -2,8 +2,26 @@
 
 import { Api } from "teleproto";
 import { getClient, fileNameOf, guessExtension } from "./client.js";
-import { baseUrl } from "./config.js";
+import { baseUrl, config } from "./config.js";
 import { escapeHtml } from "../src/util.js";
+
+/**
+ * peer.id → 实体解析可用的形式（放进 URL 的 ch= 参数）。
+ * teleproto resolveId 按符号判类型：正数 → PeerUser（users.getUsers, accessHash 0），
+ * 频道会判错 → 冷启动（实体缓存未命中）时 /media、/avatar 直接 500。
+ * 数字必须带 -100 前缀才能判成 PeerChannel。
+ */
+export function peerKeyArg(peer) {
+  const id = typeof peer === "object" && peer !== null ? peer.id : peer;
+  const s = String(id ?? "");
+  if (/^\d+$/.test(s)) return `-100${s}`;
+  return s;
+}
+
+/** <img>/<video> 直接引用 bridge URL 时没有 x-token 头，URL 必须自带 ?token= */
+function tokenQuery() {
+  return config.token ? `&token=${encodeURIComponent(config.token)}` : "";
+}
 
 const VIDEO_EXT = ["mp4", "webm", "mov", "mkv", "m4v"];
 const AUDIO_EXT = ["mp3", "m4a", "aac", "ogg", "oga", "opus", "wav", "flac"];
@@ -75,7 +93,7 @@ export function mediaOf(msg, peer) {
   if (!type) return [];
 
   const base = baseUrl();
-  const url = `${base}/media?ch=${encodeURIComponent(peer.id ?? peer)}&m=${msg.id}`;
+  const url = `${base}/media?ch=${encodeURIComponent(peerKeyArg(peer))}&m=${msg.id}${tokenQuery()}`;
   return [
     {
       type,
@@ -115,7 +133,7 @@ export async function peerInfo(entity) {
   const info = {
     title: entity.title || entity.firstName || "频道",
     username: entity.usernames?.[0]?.activeUsername || entity.username || null,
-    avatar: `${base}/avatar?ch=${encodeURIComponent(entity.id)}`,
+    avatar: `${base}/avatar?ch=${encodeURIComponent(peerKeyArg(entity))}${tokenQuery()}`,
     description: "",
     counters: {},
   };

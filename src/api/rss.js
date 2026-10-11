@@ -227,10 +227,10 @@ export async function rssFeed(request, env, ctx, url) {
     feedUrl.searchParams.delete("token");
     feedUrl.searchParams.set("limit", String(limit));
     const res = await getFeed(request, env, ctx, feedUrl, authed);
-    const nameOf = new Map((res.channels || []).filter((c) => c && c.key).map((c) => [c.key, c.name]));
+    const nameOf = new Map((res.channels || []).filter((c) => c && c.key).map((c) => [String(c.key).toLowerCase(), c.name]));
     const posts = (res.posts || []).map((p) => ({
       ...p,
-      channelName: nameOf.get(p.channelKey || p.channel) || p.channel,
+      channelName: nameOf.get(String(p.channelKey || p.channel || "").toLowerCase()) || p.channel,
     }));
 
     // 上游故障导致的「合法空源」：503 + Retry-After，阅读器会重试；

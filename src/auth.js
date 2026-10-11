@@ -16,6 +16,7 @@ import {
   createSession,
   getSession,
   destroySession,
+  bumpAuthEpoch,
   consumeRateLimit,
   resetRateLimit,
 } from "./store.js";
@@ -144,7 +145,9 @@ export async function handleChangePassword(request, env, body) {
     throw new HttpError(400, "当前使用环境变量 ADMIN_PASSWORD，请修改环境变量而非数据库凭据", "env_managed");
   }
   await createAdminCredential(env, credential.username, next);
-  // 换密码后强制重新登录
+  // 换密码后强制重新登录：bump 会话纪元 → 所有已发出去的会话（包括攻击者已持有的、
+  // 其他浏览器的）在下次 getSession 时全部失效；当前会话一并销毁
+  await bumpAuthEpoch(env);
   if (state.token) await destroySession(env, state.token);
   return { ok: true, reauth: true };
 }

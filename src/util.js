@@ -387,6 +387,9 @@ export function normalizeChannelInput(raw) {
   // tg://resolve?domain=xxx / tg://xxx?domain=xxx
   const tg = /tg:\/\/(?:resolve)?\?[^#]*\bdomain=([^&#]+)/i.exec(input);
   if (tg) return cleanUsername(tg[1]);
+  // 其余 tg:// 形式（tg://join?invite=…、tg://addstickers/… 等）都不是公开频道：
+  // 不能掉进通用路径把 "join" 当用户名解析
+  if (/^tg:\/\//i.test(input)) return null;
   let s = input;
   // 去协议（含 tg:// 之外的任意 scheme，如 https://）
   s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");

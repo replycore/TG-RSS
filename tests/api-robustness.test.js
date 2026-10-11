@@ -48,3 +48,17 @@ test("router：坏 key（%E4）返回 404 而非 500", async () => {
   const body = await res.json();
   assert.equal(body.code, "channel_not_found");
 });
+
+test("findChannel：大小写不敏感（#/c/Xiaomi 匹配 key=xiaomi）", async () => {
+  const { findChannel } = await import("../src/api/content.js");
+  const channels = [
+    { key: "xiaomi", name: "小米官方", type: "public" },
+    { key: "telegram", name: "Telegram", type: "public" },
+  ];
+  // 频道 key 是 username.toLowerCase()，但帖子 channel 取自 t.me HTML 的 data-post（原始大小写）
+  assert.equal(findChannel(channels, "Xiaomi")?.name, "小米官方");
+  assert.equal(findChannel(channels, "xiaomi")?.name, "小米官方");
+  assert.equal(findChannel(channels, "TELEGRAM")?.name, "Telegram");
+  assert.equal(findChannel(channels, "nope"), null);
+  assert.equal(findChannel(channels, 123), null, "非字符串 key 走精确匹配");
+});

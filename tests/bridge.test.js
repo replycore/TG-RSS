@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { classifyMedia, formatSize, formatDuration, messageToPost, mediaOf } from "../bridge/post.js";
+import { classifyMedia, formatSize, formatDuration, messageToPost, mediaOf, peerKeyArg } from "../bridge/post.js";
 
 const peer = { id: -1001234567890 };
 const date = new Date("2024-05-01T10:00:00.000Z");
@@ -119,4 +119,12 @@ test("私密频道（无 username）不生成外链", () => {
   const post = messageToPost(makeMessage(), peer, { username: null });
   assert.equal(post.url, null);
   assert.match(post.id, /^-1001234567890\/42$/);
+});
+
+test("peerKeyArg：数字频道 id 带 -100 前缀（防冷启动被判成 PeerUser）", () => {
+  assert.equal(peerKeyArg(1234567890), "-1001234567890");
+  assert.equal(peerKeyArg({ id: 1234567890 }), "-1001234567890", "peer 对象取 id");
+  assert.equal(peerKeyArg("-1001234567890"), "-1001234567890", "已带前缀原样返回");
+  assert.equal(peerKeyArg("telegram"), "telegram", "用户名不受影响");
+  assert.equal(peerKeyArg({ id: "telegram" }), "telegram");
 });

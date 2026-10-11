@@ -135,8 +135,11 @@ export function validateChannel(input) {
     return { channel: normalizeChannel({ ...input, type, username }) };
   }
   const tgId = String(input.tgId || "").trim();
-  if (!/^-?\d{5,25}$/.test(tgId)) {
-    return { error: "私密频道需要数字 ID（形如 -1001234567890）" };
+  // 必须带负号：Telegram 频道 ID 恒为负数形式（-100…）。正数与负数会归一化成
+  // 同一个 key（p<无符号>），± 同时存在时报「频道重复」；且正数发给桥接端
+  // 会被 teleproto 判成 PeerUser，peer 解析必然失败
+  if (!/^-\d{5,25}$/.test(tgId)) {
+    return { error: "私密频道需要负数数字 ID（形如 -1001234567890）；正数会被桥接端误判为用户" };
   }
   const channel = normalizeChannel({ ...input, type, tgId });
   // 私密频道强制隐藏：只对管理员会话或持有 RSS token 的请求可见
@@ -216,11 +219,27 @@ export function isInitialized(credential) {
 
 /* ------------------------------------------------------------------- 会话 */
 
+/* 会话纪元：Workers KV 的 Worker API 没有 list()，无法枚举 session key 批量删除；
+   改密码时 bump 纪元，让所有旧会话在下一次 getSession 时被判失效（惰性批量注销） */
+const AUTH_EPOCH_KEY = "auth:epoch";
+
+export async function getAuthEpoch(env) {
+  const value = await readJSON(env, AUTH_EPOCH_KEY, 0);
+  return Number(value) || 0;
+}
+
+export async function bumpAuthEpoch(env) {
+  const next = (await getAuthEpoch(env)) + 1;
+  await writeJSON(env, AUTH_EPOCH_KEY, next);
+  return next;
+}
+
 export async function createSession(env, payload = {}) {
   const token = randomHex(32);
   const record = {
     ...payload,
     role: "admin",
+    epoch: await getAuthEpoch(env),
     createdAt: nowSec(),
     exp: nowSec() + SESSION_TTL,
   };
@@ -233,6 +252,11 @@ export async function getSession(env, token) {
   const record = await readJSON(env, KEYS.session + token, null);
   if (!record) return null;
   if (record.exp && record.exp < nowSec()) {
+    await deleteKey(env, KEYS.session + token);
+    return null;
+  }
+  // 纪元校验：改密码后 epoch 变了 → 旧会话全部失效（含本会话，登录页会要求重新登录）
+  if ((Number(record.epoch) || 0) !== (await getAuthEpoch(env))) {
     await deleteKey(env, KEYS.session + token);
     return null;
   }

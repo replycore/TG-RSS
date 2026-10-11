@@ -90,7 +90,7 @@ export async function renderMedia(root, ctx, type = "video", channelKey = "") {
       });
       (data.errors || []).forEach((e) => toast(`${e.key}：${e.message}`, "error"));
 
-      const hasPending = Object.values(cursors).some((v) => typeof v === "string");
+      const hasPending = Object.entries(cursors).some(([k, v]) => k !== "__lastBatchTail" && typeof v === "string");
       if (!hasPending || (added === 0 && data.done)) finished = true;
 
       if (finished) {

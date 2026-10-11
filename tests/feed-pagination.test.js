@@ -196,3 +196,44 @@ test("getMediaList：截断点落在帖子内部（一帖双视频）→ 游标 
     globalThis.fetch = realFetch;
   }
 });
+
+test("getFeed：轮转切片防靠后频道饥饿（频道数 > feedChannels）", async () => {
+  const CHANNELS = Array.from({ length: 8 }, (_, i) => ({
+    key: `chan${i + 1}`, type: "public", username: `chan${i + 1}`, name: `C${i + 1}`, order: i,
+  }));
+  // 每频道 page1 = 1 帖 + more；before=999 → EMPTY（翻完，next=null）
+  const pages = {};
+  for (let i = 1; i <= 8; i += 1) {
+    pages[`chan${i}`] = page(`chan${i}`, [{ id: 900 + i, date: `2024-06-01T1${i}:00:00` }], "999");
+  }
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const u = String(url);
+    const m = /\/s\/(chan\d+)/.exec(u);
+    const html = m && !u.includes("before=") ? pages[m[1]] : EMPTY_PAGE;
+    return { ok: true, status: 200, text: async () => html, headers: new Map() };
+  };
+  try {
+    // pageSize=1：loadFilledChannelPage 凑够 1 帖即 break，next 保留 more 的游标
+    const env = mockEnv(CHANNELS, { feedChannels: 6, pageSize: 1 });
+    const seen = new Set();
+    let cursors = {};
+    let last = null;
+    let anchorAfterRound2 = null;
+    for (let round = 0; round < 4; round += 1) {
+      const c = round === 0 ? "" : `&c=${encodeState(cursors)}`;
+      last = await getFeed({}, env, {}, new URL(`https://x/api/feed?limit=10${c}`), false);
+      for (const p of last.posts) seen.add(p.channel);
+      cursors = last.cursors;
+      if (round === 1) anchorAfterRound2 = cursors.__lastBatchTail;
+    }
+    // 修复前：每轮固定取前 6 个频道，chan7/chan8 永不出现
+    for (let i = 1; i <= 8; i += 1) {
+      assert.ok(seen.has(`chan${i}`), `chan${i} 必须在前 4 页内出现（轮转修复前靠后频道饥饿）`);
+    }
+    assert.equal(anchorAfterRound2, "chan4", "锚点=上一批次尾频道（chan1-4 翻完后轮到 chan5 起）");
+    assert.equal(last.done, true, "全部频道翻完后 done=true");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

@@ -12,7 +12,7 @@ import * as admin from "./api/admin.js";
 import * as rss from "./api/rss.js";
 import { turnstileSiteKey } from "./turnstile.js";
 
-const VERSION = "1.2.2";
+const VERSION = "1.2.3";
 
 async function readBody(request) {
   if (request.method === "GET" || request.method === "HEAD") return {};

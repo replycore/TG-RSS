@@ -172,6 +172,9 @@ async function main() {
       console.log("  ⚠ 已对非本机开放：请确认 BRIDGE_TOKEN 足够长，并用防火墙/Tunnel 保护");
     }
     console.log(`  对外地址 : ${config.publicUrl || "(未设置 PUBLIC_URL，Worker 将回源 127.0.0.1——跨机部署必须设置)"}`);
+    if (!config.publicUrl) {
+      console.log("  ⚠ 未设置 PUBLIC_URL：帖子里的媒体/头像 URL 会写成 http://127.0.0.1:…，浏览器侧无法直连");
+    }
     console.log(`  媒体缓存 : ${config.cacheDir}`);
     console.log("  接口     : /health /feed /media /avatar");
   });

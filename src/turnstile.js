@@ -17,12 +17,14 @@ import { HttpError } from "./util.js";
 const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 
 export function turnstileEnabled(env) {
-  return !!(env && env.TURNSTILE_SECRET);
+  // 必须双配才算启用：只配 SECRET 会让前端拿不到 sitekey、getToken() 恒空 →
+  // 后端 verifyTurnstile 恒 403 → setup/login 永久锁死（只能改环境变量恢复）
+  return !!(env && env.TURNSTILE_SECRET && env.TURNSTILE_SITE_KEY);
 }
 
 /** 前端渲染需要的 sitekey；只有配了 secret（即启用）才下发，避免前后端状态不一致 */
 export function turnstileSiteKey(env) {
-  return turnstileEnabled(env) && env.TURNSTILE_SITE_KEY ? env.TURNSTILE_SITE_KEY : null;
+  return turnstileEnabled(env) ? env.TURNSTILE_SITE_KEY : null;
 }
 
 /**
@@ -30,8 +32,8 @@ export function turnstileSiteKey(env) {
  * body.turnstileToken 为前端提交的令牌。
  */
 export async function verifyTurnstile(request, env, body) {
-  const secret = env && env.TURNSTILE_SECRET;
-  if (!secret) return { enabled: false, ok: true };
+  if (!turnstileEnabled(env)) return { enabled: false, ok: true }; // 未启用（含只配 SECRET 的残缺状态，见 turnstileEnabled）
+  const secret = env.TURNSTILE_SECRET;
 
   const token = String((body && body.turnstileToken) || "").slice(0, 2048);
   if (!token) {

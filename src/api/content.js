@@ -42,6 +42,13 @@ export function visibleChannels(channels, authenticated) {
 }
 
 export function findChannel(channels, key) {
+  // 大小写不敏感：频道 key 是小写的（store.js），用户手输 #/c/Xiaomi 与 #/c/xiaomi 同义
+  if (typeof key === "string") {
+    const lower = key.toLowerCase();
+    const direct = channels.find((ch) => ch.key === key);
+    if (direct) return direct;
+    return channels.find((ch) => typeof ch.key === "string" && ch.key.toLowerCase() === lower) || null;
+  }
   return channels.find((ch) => ch.key === key) || null;
 }
 
@@ -215,9 +222,18 @@ export async function getFeed(request, env, ctx, url, authenticated) {
   const cursors = decodeState(url.searchParams.get("c"), {}) || {};
   // null 表示该频道已翻完
   const pending = visible.filter((ch) => cursors[ch.key] === undefined || typeof cursors[ch.key] === "string");
-  const batch = pending.slice(0, cap);
+  // 轮转切片（防靠后频道饥饿）：固定取前 cap 个会让第 cap+1 个之后的频道
+  // 永远等前面翻完。轮转锚点是上次 batch 的尾频道（存在 __lastBatchTail 里），
+  // 本轮从「锚点之后（按频道配置序）」开始取，保证每轮优先取上次没取到的频道。
+  const ordered = [...pending];
+  const anchor = typeof cursors.__lastBatchTail === "string" ? cursors.__lastBatchTail : null;
+  const anchorIdx = anchor ? ordered.findIndex((ch) => ch.key === anchor) : -1;
+  const start = anchorIdx >= 0 ? (anchorIdx + 1) % ordered.length : 0;
+  const rotated = start > 0 ? [...ordered.slice(start), ...ordered.slice(0, start)] : ordered;
+  const batch = rotated.slice(0, cap);
 
   const nextCursors = { ...cursors };
+  delete nextCursors.__lastBatchTail;
   const perChannel = [];
 
   await Promise.all(
@@ -277,6 +293,11 @@ export async function getFeed(request, env, ctx, url, authenticated) {
     const lastKept = keptShown[keptShown.length - 1];
     if (lastKept.postId != null) nextCursors[key] = String(lastKept.postId);
   }
+
+  // 轮转锚点写回：本轮 batch 的尾频道，供下轮 rotate。
+  // 注意 __lastBatchTail 是内部字段，会随 cursors 发给前端透传回来——
+  // 前端的 hasPending 判断必须忽略它（见 views.js / media.js），否则"没有更多了"永远出不来
+  if (batch.length) nextCursors.__lastBatchTail = batch[batch.length - 1].key;
 
   return {
     posts: kept,

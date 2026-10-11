@@ -297,7 +297,11 @@ export async function refreshChannel(request, env, ctx, body) {
   await requireAdmin(request, env);
   const key = String(body?.key || "");
   const channels = await getChannels(env);
-  const channel = channels.find((c) => c.key === key);
+  // 大小写不敏感（与其他查找点一致）
+  const lowerKey = key.toLowerCase();
+  const channel =
+    channels.find((c) => c.key === key) ||
+    channels.find((c) => typeof c.key === "string" && c.key.toLowerCase() === lowerKey);
   if (!channel) throw new HttpError(404, "频道不存在", "channel_not_found");
 
   if (channel.type === "public") {

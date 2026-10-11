@@ -158,3 +158,27 @@ test("validateChannel：公开频道兼容分享链接", () => {
   const empty = validateChannel({ type: "public", username: "" });
   assert.ok(empty.error);
 });
+
+test("validateChannel：私密 tgId 必须负数（防 ± 同 key 的形同校验）", () => {
+  const bad = validateChannel({ type: "private", tgId: "1001234567890" });
+  assert.ok(bad.error && /负数/.test(bad.error), "正数 id 应拒绝");
+  const zero = validateChannel({ type: "private", tgId: "0" });
+  assert.ok(zero.error, "0 应拒绝");
+  const ok1 = validateChannel({ type: "private", tgId: "-1001234567890" });
+  assert.equal(ok1.channel.key, "p1001234567890");
+  assert.equal(ok1.channel.hidden, true, "私密频道强制隐藏");
+});
+
+test("会话纪元：bump 后所有旧会话失效（改密码批量注销）", async () => {
+  const e = env();
+  const { bumpAuthEpoch } = await import("../src/store.js");
+  const token = await createSession(e, { username: "root" });
+  const tOther = await createSession(e, { username: "root" });
+  assert.ok(await getSession(e, token));
+  assert.ok(await getSession(e, tOther));
+  await bumpAuthEpoch(e); // 模拟改密码
+  assert.equal(await getSession(e, token), null, "旧会话 1 必须失效");
+  assert.equal(await getSession(e, tOther), null, "旧会话 2（攻击者持有）也必须失效");
+  const fresh = await createSession(e, { username: "root" });
+  assert.ok(await getSession(e, fresh), "纪元 bump 后新建的会话有效");
+});

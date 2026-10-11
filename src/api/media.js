@@ -45,14 +45,23 @@ export async function getMediaList(request, env, ctx, url, authenticated) {
   const general = await getGeneral(env);
   const onlyKey = url.searchParams.get("key");
   let visible = visibleChannels(channels, authenticated);
-  if (onlyKey) visible = visible.filter((ch) => ch.key === onlyKey);
+  if (onlyKey) {
+    const lowerKey = onlyKey.toLowerCase();
+    visible = visible.filter((ch) => ch.key === onlyKey || (typeof ch.key === "string" && ch.key.toLowerCase() === lowerKey));
+  }
 
   const pageSize = clampInt(url.searchParams.get("limit"), 6, 60, mediaSettings.pageSize || 24);
   const cursors = decodeState(url.searchParams.get("c"), {}) || {};
   const pending = visible.filter((ch) => cursors[ch.key] === undefined || typeof cursors[ch.key] === "string");
-  const batch = pending.slice(0, MAX_MEDIA_CHANNELS);
+  // 轮转切片（防靠后频道饥饿）：与 getFeed 同一套锚点机制（__lastBatchTail + 配置序索引）
+  const mediaOrdered = [...pending];
+  const mediaAnchor = typeof cursors.__lastBatchTail === "string" ? cursors.__lastBatchTail : null;
+  const mediaAnchorIdx = mediaAnchor ? mediaOrdered.findIndex((ch) => ch.key === mediaAnchor) : -1;
+  const mediaStart = mediaAnchorIdx >= 0 ? (mediaAnchorIdx + 1) % mediaOrdered.length : 0;
+  const batch = (mediaStart > 0 ? [...mediaOrdered.slice(mediaStart), ...mediaOrdered.slice(0, mediaStart)] : mediaOrdered).slice(0, MAX_MEDIA_CHANNELS);
 
   const nextCursors = { ...cursors };
+  delete nextCursors.__lastBatchTail;
   const items = [];
   const errors = [];
   // 每频道「本页至少有一条该类型媒体」的帖子（新→旧），供 slice 截断后回退游标
@@ -128,6 +137,10 @@ export async function getMediaList(request, env, ctx, url, authenticated) {
       nextCursors[key] = String(lastKept.postId + (partial ? 1 : 0));
     }
   }
+
+  // 轮转锚点写回（与 getFeed 同机制）：本轮 batch 尾频道供下轮 rotate；
+  // 前端 hasPending 必须忽略 __lastBatchTail
+  if (batch.length) nextCursors.__lastBatchTail = batch[batch.length - 1].key;
 
   return {
     type,

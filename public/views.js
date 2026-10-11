@@ -14,10 +14,15 @@ function dedupe() {
 }
 
 function withChannelMeta(post, map) {
-  const meta = map[post.channelKey || post.channel] || map[post.channel] || null;
+  // 大小写不敏感查找：频道 key 是 username.toLowerCase()（store.js），
+  // 但 post.channel 取自 t.me HTML 的 data-post，保留原始大小写（如 "Xiaomi"）
+  // ——精确匹配 miss 会导致频道链接变成 #/c/原始slug → "频道不存在"，自定义名也丢失
+  const slugKey = post.channelKey || post.channel;
+  const lowerKey = typeof slugKey === "string" ? slugKey.toLowerCase() : slugKey;
+  const meta = map[slugKey] || map[lowerKey] || map[post.channel] || null;
   return {
     ...post,
-    channelKey: post.channelKey || post.channel,
+    channelKey: meta?.key || slugKey,
     channelName: meta?.name || post.channelName || post.channel,
   };
 }
@@ -129,7 +134,7 @@ export async function renderFeed(root, ctx) {
       renderTagBar();
       (data.errors || []).forEach((e) => toast(`${e.key}：${e.message}`, "error"));
 
-      const hasPending = Object.values(cursors).some((v) => typeof v === "string");
+      const hasPending = Object.entries(cursors).some(([k, v]) => k !== "__lastBatchTail" && typeof v === "string");
       if (!hasPending || (added === 0 && data.done)) finished = true;
       if (finished) {
         clear(footer);
@@ -177,7 +182,10 @@ export async function renderChannel(root, ctx, key) {
   root.classList.remove("wide");
   ctx.onTagClick = null; // 频道不存在早退时先复位，避免留下上一个视图的回调
 
-  const channel = (ctx.state.channels || []).find((c) => c.key === key);
+  const lowerKey = typeof key === "string" ? key.toLowerCase() : key;
+  const channel =
+    (ctx.state.channels || []).find((c) => c.key === key) ||
+    (ctx.state.channels || []).find((c) => typeof c.key === "string" && c.key.toLowerCase() === lowerKey);
   if (!channel) {
     root.append(
       el("div", { class: "errorbox" }, [

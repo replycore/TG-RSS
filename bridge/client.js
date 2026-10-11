@@ -65,7 +65,16 @@ export async function downloadMediaToCache(peer, msg) {
   const dir = config.cacheDir;
   fs.mkdirSync(dir, { recursive: true });
 
-  const existing = fs.readdirSync(dir).find((f) => f.startsWith(`${base}.`));
+  // 已完成缓存判定：排除 .part（下载中断残留，命中它会永久 serving 截断内容）
+  // 且必须 size > 0（与 downloadAvatarToCache 同标准）
+  const existing = fs.readdirSync(dir).find((f) => {
+    if (!f.startsWith(`${base}.`) || f.endsWith(".part")) return false;
+    try {
+      return fs.statSync(path.join(dir, f)).size > 0;
+    } catch {
+      return false;
+    }
+  });
   if (existing) return path.join(dir, existing);
 
   const ext = guessExtension(msg);
