@@ -12,7 +12,7 @@ import * as admin from "./api/admin.js";
 import * as rss from "./api/rss.js";
 import { turnstileSiteKey } from "./turnstile.js";
 
-const VERSION = "1.2.1";
+const VERSION = "1.2.2";
 
 async function readBody(request) {
   if (request.method === "GET" || request.method === "HEAD") return {};
@@ -99,7 +99,13 @@ async function handleApi(request, env, ctx, url) {
   }
   const postsMatch = /^\/api\/channels\/([^/]+)\/posts$/.exec(path);
   if (postsMatch && method === "GET") {
-    const key = decodeURIComponent(postsMatch[1]);
+    // 容错解码：坏 key（如 %E4）不能抛 URIError 变 500——按原值查频道 → 404
+    let key = postsMatch[1];
+    try {
+      key = decodeURIComponent(key);
+    } catch {
+      /* 保留原值，由 findChannel 走 404 */
+    }
     return json(await content.getChannelPosts(request, env, ctx, url, key, authenticated));
   }
   if (path === "/api/media" && method === "GET") {

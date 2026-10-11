@@ -5,7 +5,8 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseRoute } from "../public/route.js";
+import { readFile } from "node:fs/promises";
+import { parseRoute, safeDecode } from "../public/route.js";
 
 function withHash(hash) {
   globalThis.location = { hash };
@@ -29,4 +30,19 @@ test("parseRoute：正常解析不受影响", () => {
   assert.deepEqual(withHash("#/admin/channels"), { name: "admin", tab: "channels" });
   assert.deepEqual(withHash("#/c/%E7%A7%91%E6%8A%80"), { name: "channel", key: "科技" }, "合法中文编码正常解码");
   assert.deepEqual(withHash("#/unknown"), { name: "feed" }, "未知路径回退信息流");
+});
+
+test("safeDecode：坏序列返回原值", () => {
+  assert.equal(safeDecode("%E4"), "%E4");
+  assert.equal(safeDecode("%E7%A7%91%E6%8A%80"), "科技");
+});
+
+test("app.js：activeChannelKey 必须走 safeDecode（坏 hash 不杀首屏）", async () => {
+  // app.js 顶层有 boot() 副作用无法 import——用静态断言防回归裸 decodeURIComponent
+  // （第一轮评审 Bug4 残留：route.js 修了 safeDecode，activeChannelKey 却漏了）
+  const src = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  const fnBody = /function activeChannelKey\(\)\s*\{([\s\S]*?)\n\}/.exec(src)?.[1];
+  assert.ok(fnBody, "应能找到 activeChannelKey 函数体");
+  assert.ok(fnBody.includes("safeDecode"), "activeChannelKey 应使用 safeDecode");
+  assert.ok(!/decodeURIComponent\(/.test(fnBody), "函数体内不得裸调 decodeURIComponent");
 });

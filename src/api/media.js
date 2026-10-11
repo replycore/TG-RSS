@@ -55,6 +55,8 @@ export async function getMediaList(request, env, ctx, url, authenticated) {
   const nextCursors = { ...cursors };
   const items = [];
   const errors = [];
+  // 每频道「本页至少有一条该类型媒体」的帖子（新→旧），供 slice 截断后回退游标
+  const mediaPostsByChannel = new Map();
 
   await Promise.all(
     batch.map(async (ch) => {
@@ -62,9 +64,12 @@ export async function getMediaList(request, env, ctx, url, authenticated) {
         const before = typeof cursors[ch.key] === "string" ? cursors[ch.key] : null;
         const page = await loadChannelPage(env, ctx, ch, before, general.pageSize || 20);
         nextCursors[ch.key] = page.next ? String(page.next) : null;
+        const mediaPosts = [];
         for (const post of page.posts) {
+          let hasType = false;
           (post.media || []).forEach((m, index) => {
             if (m.type !== type) return;
+            hasType = true;
             items.push({
               id: `${post.id}#${index}`,
               type,
@@ -84,7 +89,9 @@ export async function getMediaList(request, env, ctx, url, authenticated) {
               },
             });
           });
+          if (hasType) mediaPosts.push(post);
         }
+        mediaPostsByChannel.set(ch.key, mediaPosts);
       } catch (err) {
         nextCursors[ch.key] = null;
         errors.push({ key: ch.key, message: err?.message || "fetch_failed" });
@@ -93,9 +100,28 @@ export async function getMediaList(request, env, ctx, url, authenticated) {
   );
 
   items.sort((a, b) => (Date.parse(b.date || 0) || 0) - (Date.parse(a.date || 0) || 0));
+  const kept = items.slice(0, pageSize);
+
+  // ---- 游标回退（与 getFeed 同根）：slice 截掉的媒体帖，游标不得越过 ----
+  // kept 的 post.id 集合；对每频道按「帖」粒度判断截断，回退到最后保留的媒体帖
+  const keptPostIds = new Set(kept.map((it) => String(it.post?.id ?? "")));
+  for (const [key, mediaPosts] of mediaPostsByChannel) {
+    if (!(key in nextCursors) || !mediaPosts.length) continue;
+    const keptPosts = mediaPosts.filter((p) => keptPostIds.has(String(p.id ?? "")));
+    if (keptPosts.length === mediaPosts.length) continue; // 全保留
+    if (keptPosts.length === 0) {
+      // 展示帖全被截：恢复原游标，下次重抓本页
+      if (typeof cursors[key] === "string") nextCursors[key] = cursors[key];
+      else delete nextCursors[key];
+      continue;
+    }
+    const lastKept = keptPosts[keptPosts.length - 1];
+    if (lastKept.postId != null) nextCursors[key] = String(lastKept.postId);
+  }
+
   return {
     type,
-    items: items.slice(0, pageSize),
+    items: kept,
     cursors: nextCursors,
     done: batch.length === 0,
     errors,
@@ -264,7 +290,14 @@ export async function proxyMedia(request, env, ctx, url) {
   }
 
   const bridge = await resolveBridge(env);
-  const isBridge = !!(bridge && bridge.url && new URL(bridge.url).hostname === target.hostname);
+  // 脏数据防线：历史版本可能把 "https://" 存成 "https:"，裸 new URL 会抛 TypeError → 500
+  let bridgeHost = null;
+  try {
+    bridgeHost = bridge && bridge.url ? new URL(bridge.url).hostname : null;
+  } catch {
+    bridgeHost = null;
+  }
+  const isBridge = !!(bridgeHost && bridgeHost === target.hostname);
   if (target.protocol === "http:" && !isBridge) {
     throw new HttpError(403, "只允许 https 媒体地址", "bad_scheme");
   }

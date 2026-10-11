@@ -43,6 +43,17 @@ test("非法桥接地址：400 且 bridge/general 都不落盘", async () => {
   assert.equal(e.TG_RSS_KV.map.has("settings:general"), false, "同一请求里其它 section 也不得落盘（原子性）");
 });
 
+test("桥接地址 'https://'（无主机名）拒绝，不落盘", async () => {
+  // Bug B：仅前缀匹配会放过 "https://"，strip 尾斜杠后变 "https:" 入库 → 媒体代理全挂
+  const e = { TG_RSS_KV: new MockKV() };
+  const req = await authedReq(e);
+  await assert.rejects(
+    () => saveSettings(req, e, { bridge: { url: "https://", enabled: true, token: "t" } }),
+    (err) => err.status === 400 && /URL/.test(err.message),
+  );
+  assert.equal(e.TG_RSS_KV.map.has("settings:bridge"), false, "不得落盘");
+});
+
 test("合法桥接地址：正常写入", async () => {
   const e = { TG_RSS_KV: new MockKV() };
   const req = await authedReq(e);

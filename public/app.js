@@ -120,7 +120,9 @@ function renderSidebar() {
 function activeChannelKey() {
   const raw = location.hash.replace(/^#/, "");
   const m = /^\/c\/([^/?]+)/.exec(raw);
-  return m ? decodeURIComponent(m[1]) : null;
+  // 必须容错：本函数在 route() 的 try 之外被调用，裸 decodeURIComponent 遇坏 hash（#/c/%E4）
+  // 会抛 URIError 杀死整个启动链（首屏卡死）——与 parseRoute 同一套 safeDecode
+  return m ? safeDecode(m[1]) : null;
 }
 
 /* ------------------------------------------------------------- 侧栏开关 */
@@ -150,8 +152,8 @@ document.getElementById("refresh-all").onclick = async (e) => {
 /* ---------------------------------------------------------------- 路由 */
 
 // 路由解析已抽到 public/route.js（safeDecode 容错 + 可单测）；保留转发导出兼容旧引用
-export { parseRoute } from "./route.js";
-import { parseRoute } from "./route.js";
+export { parseRoute, safeDecode } from "./route.js";
+import { parseRoute, safeDecode } from "./route.js";
 
 function setActiveNav(name) {
   document.querySelectorAll("#main-nav a").forEach((a) => {
@@ -240,7 +242,7 @@ async function boot() {
     }
     document.title = state.config.siteTitle || "TG-RSS";
     const versionNode = document.getElementById("app-version");
-    if (versionNode) versionNode.textContent = `v${state.config.version || "1.2.1"}`;
+    if (versionNode) versionNode.textContent = `v${state.config.version || "1.2.2"}`;
   } catch (err) {
     console.error("配置加载失败", err);
   }

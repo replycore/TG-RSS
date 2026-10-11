@@ -246,13 +246,48 @@ export async function getFeed(request, env, ctx, url, authenticated) {
   // 按 #标签 过滤（标签取自消息正文里的 #话题 词）
   const tag = String(url.searchParams.get("tag") || "").replace(/^#/, "").trim().toLowerCase();
   if (tag) posts = posts.filter((p) => (p.tags || []).some((t) => String(t).toLowerCase() === tag));
-  posts = posts.slice(0, limit);
+  const kept = posts.slice(0, limit);
+
+  // ---- 游标回退（防分页静默丢数据）----
+  // 上面各频道的游标已推进到页尾；若全局 slice 截掉了某频道「应展示却没展示」的帖，
+  // 游标越过的内容下一页永远取不回（默认 6×20=120 > limit=60 即命中）。
+  // 频道内本就新→旧、全局按时间倒序 → 被保留的必是该频道较新的前缀：
+  //   ① 展示帖全保留 → 维持 page.next 推进；
+  //   ② 部分被截   → 回退到「最后一条保留的展示帖」（before=它，下页正好从截断点续上，无重复无丢失）；
+  //   ③ 展示帖全被截 → 游标不推进（恢复原值/删除，下次重抓本页）。
+  // 被 tag 筛掉、被广告/仅媒体过滤的帖不算「被截」——游标翻过它们才是筛选语义。
+  const keptKeys = new Set(kept.map((p) => feedPostKey(p)));
+  for (const entry of perChannel) {
+    if (entry.error) continue;
+    const key = entry.channel.key;
+    if (!(key in nextCursors)) continue;
+    const shown = tag
+      ? entry.posts.filter((p) => (p.tags || []).some((t) => String(t).toLowerCase() === tag))
+      : entry.posts;
+    if (!shown.length) continue;
+    const keptShown = shown.filter((p) => keptKeys.has(feedPostKey(p)));
+    if (keptShown.length === shown.length) continue; // ① 全保留
+    if (keptShown.length === 0) {
+      // ③ 全被截：恢复原游标（首次请求为 undefined → 删除键，保持「未开始」语义）
+      if (typeof cursors[key] === "string") nextCursors[key] = cursors[key];
+      else delete nextCursors[key];
+      continue;
+    }
+    // ② 部分被截：回退到最后保留帖
+    const lastKept = keptShown[keptShown.length - 1];
+    if (lastKept.postId != null) nextCursors[key] = String(lastKept.postId);
+  }
 
   return {
-    posts,
+    posts: kept,
     cursors: nextCursors,
     channels: perChannel.map((e) => e.channel),
     errors: perChannel.filter((e) => e.error).map((e) => ({ key: e.channel.key, message: e.error })),
     done: batch.length === 0,
   };
+}
+
+/** feed 帖子去重键：优先全局 id，退化为 频道/消息号（与 loadFilledChannelPage 的 seen 一致） */
+function feedPostKey(p) {
+  return p.id != null ? String(p.id) : `${p.channel}/${p.postId}`;
 }

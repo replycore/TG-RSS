@@ -31,6 +31,9 @@ function withChannelMeta(post, map) {
  */
 function createTagBar({ bar, ctx, tagSet, activeTag, setTag }) {
   return function renderTagBar() {
+    // 容器隔离守卫：feed 请求 in-flight 时切走视图，bar 已随容器 detached——
+    // 此时不得再动顶栏共享的 #tag-toggle 按钮（否则晚到回调把「标签展开」错误带回非筛选视图）
+    if (!bar.isConnected) return;
     clear(bar);
     const list = [...tagSet.values()].sort((a, b) => a.localeCompare(b));
     if (activeTag && !list.some((t) => t.toLowerCase() === activeTag.toLowerCase())) list.unshift(activeTag);

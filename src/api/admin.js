@@ -178,7 +178,18 @@ export async function saveSettings(request, env, body) {
 
   if (body.bridge) {
     const url = String(body.bridge.url || "").trim();
-    if (url && !/^https?:\/\//i.test(url)) errors.push("桥接地址必须以 http(s):// 开头");
+    if (url) {
+      // 严格校验：仅前缀匹配会放过 "https://"（strip 尾斜杠后变 "https:" 入库，
+      // 随后 media 代理 new URL 抛错 → 全部媒体请求 500）。必须能实际解析且有主机名
+      let valid = false;
+      try {
+        const parsed = new URL(url);
+        valid = (parsed.protocol === "http:" || parsed.protocol === "https:") && !!parsed.hostname;
+      } catch {
+        valid = false;
+      }
+      if (!valid) errors.push("桥接地址必须是合法的 http(s) URL（含主机名）");
+    }
     const patch = {
       url: url.replace(/\/+$/, ""),
       enabled: !!body.bridge.enabled && !!url,

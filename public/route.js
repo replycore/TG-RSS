@@ -1,7 +1,7 @@
 /** 路由解析：location.hash → 视图描述。零副作用（不碰 DOM / 不发请求），便于单测。 */
 
 /** 容错解码：坏的百分号序列（如 #/c/%E4）返回原值而不是抛 URIError 杀死路由 */
-function safeDecode(value) {
+export function safeDecode(value) {
   try {
     return decodeURIComponent(value);
   } catch {
