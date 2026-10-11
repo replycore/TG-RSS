@@ -251,7 +251,7 @@ async function boot() {
     }
     document.title = state.config.siteTitle || "TG-RSS";
     const versionNode = document.getElementById("app-version");
-    if (versionNode) versionNode.textContent = `v${state.config.version || "1.1.0"}`;
+    if (versionNode) versionNode.textContent = `v${state.config.version || "1.2.0"}`;
   } catch (err) {
     console.error("配置加载失败", err);
   }
