@@ -427,3 +427,27 @@ export function extractTags(text) {
   }
   return out;
 }
+
+/**
+ * 广告标签集合：帖子带任一标签即被判定为广告并全局隐藏
+ * （信息流 / 频道页 / RSS 均不投放）。小写精确匹配，与 extractTags 产出对齐。
+ * 中英双语 + 常见推广缩写；需要增删改这里即可。
+ */
+const AD_TAGS = new Set([
+  "广告", "廣告", "推广", "推廣", "赞助", "贊助",
+  "ad", "ads", "advert", "advertisement", "sponsor", "sponsored", "promo", "aff",
+]);
+
+/** 标签规范化：剥 # 前缀、去尾部标点/空白、转小写（容忍上游自带 # 或大小写） */
+export function normalizeTag(tag) {
+  return String(tag ?? "")
+    .replace(/^[#＃\s]+/, "")
+    .replace(/[\s.,;:!?，。；：！？、]+$/, "")
+    .toLowerCase();
+}
+
+/** 帖子是否被标记为广告（tags 命中广告标签集合） */
+export function isAdPost(post) {
+  const tags = Array.isArray(post?.tags) ? post.tags : [];
+  return tags.some((t) => AD_TAGS.has(normalizeTag(t)));
+}

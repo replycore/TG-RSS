@@ -4,6 +4,7 @@
  */
 import {
   extractTags,
+  isAdPost,
   HttpError,
   clampInt,
   decodeState,
@@ -106,7 +107,9 @@ export async function loadChannelPage(env, ctx, channel, before = null, limit = 
   const posts = parsed.posts
     .map((p) => decoratePostMedia(p, mediaSettings))
     // 统一补 #标签：公开频道解析出的与桥接返回的帖子都走到这里
-    .map((p) => ({ ...p, tags: p.tags?.length ? p.tags : extractTags(p.textPlain || p.text || "") }));
+    .map((p) => ({ ...p, tags: p.tags?.length ? p.tags : extractTags(p.textPlain || p.text || "") }))
+    // 广告帖识别（tags 命中广告标签）→ 单页出口即过滤，信息流/频道页/RSS 全局隐藏
+    .filter((p) => !isAdPost(p));
   return { info, posts, next: parsed.nextBefore ?? null };
 }
 
@@ -115,27 +118,29 @@ export function postHasMedia(post) {
   return Array.isArray(post.media) && post.media.length > 0;
 }
 
-/** 仅媒体频道连续翻页时的页数上限，避免纯文字频道一次请求打太多上游 */
-const MEDIA_ONLY_MAX_PAGES = 5;
+/** 单页被过滤光时继续向前补翻的页数上限，避免一次请求打太多上游 */
+const PAGE_FILL_MAX_PAGES = 5;
 
 /**
- * 「仅媒体」频道读页：只保留带媒体的帖子。
- * 一页全是纯文字时继续沿游标向前翻，直到凑够 limit 条媒体帖或翻完
- * （最多 MEDIA_ONLY_MAX_PAGES 页），避免整页被过滤空导致前端误判「到底了」。
+ * 连续翻页读取：只保留符合投放规则的帖子——
+ *  - 广告帖（isAdPost，loadChannelPage 已过滤）任何频道都不投；
+ *  - mediaOnly 频道只投带媒体的帖子。
+ * 一页被过滤空时沿游标续翻，直到凑够 limit 条或翻完
+ * （最多 PAGE_FILL_MAX_PAGES 页），避免整页被过滤空导致前端误判「到底了」。
  * 返回结构与 loadChannelPage 一致；游标 next 指向已消费掉的位置。
  */
-export async function loadMediaOnlyChannelPage(env, ctx, channel, before = null, limit = 20) {
+export async function loadFilledChannelPage(env, ctx, channel, before = null, limit = 20) {
   let cursor = before;
   let next = null;
   let info = null;
   const collected = [];
   const seen = new Set();
-  for (let page = 0; page < MEDIA_ONLY_MAX_PAGES; page += 1) {
+  for (let page = 0; page < PAGE_FILL_MAX_PAGES; page += 1) {
     const result = await loadChannelPage(env, ctx, channel, cursor, limit);
     info = info || result.info;
     next = result.next;
     for (const post of result.posts) {
-      if (!postHasMedia(post)) continue;
+      if (channel.mediaOnly && !postHasMedia(post)) continue;
       const id = post.id || `${post.channel}/${post.postId}`;
       if (seen.has(id)) continue;
       seen.add(id);
@@ -145,6 +150,11 @@ export async function loadMediaOnlyChannelPage(env, ctx, channel, before = null,
     cursor = result.next;
   }
   return { info, posts: collected, next };
+}
+
+/** 兼容旧调用：等价于 loadFilledChannelPage，强制只投媒体帖 */
+export function loadMediaOnlyChannelPage(env, ctx, channel, before = null, limit = 20) {
+  return loadFilledChannelPage(env, ctx, { ...channel, mediaOnly: true }, before, limit);
 }
 
 /* ---------------------------------------------------------------- GET /api/channels */
@@ -182,10 +192,8 @@ export async function getChannelPosts(request, env, ctx, url, key, authenticated
   const limit = clampInt(url.searchParams.get("limit"), 5, 50, general.pageSize || 20);
   const before = url.searchParams.get("before") || null;
 
-  //「仅媒体」频道：无论频道页还是信息流，都只投放带媒体的帖子
-  const { info, posts: allPosts, next } = channel.mediaOnly
-    ? await loadMediaOnlyChannelPage(env, ctx, channel, before, limit)
-    : await loadChannelPage(env, ctx, channel, before, limit);
+  // 统一走补页循环：仅媒体频道只投媒体帖；广告帖任何频道都不投（loadChannelPage 已过滤）
+  const { info, posts: allPosts, next } = await loadFilledChannelPage(env, ctx, channel, before, limit);
   // 与信息流一致的 #标签 过滤
   const tag = String(url.searchParams.get("tag") || "").replace(/^#/, "").trim().toLowerCase();
   const posts = tag
@@ -216,9 +224,8 @@ export async function getFeed(request, env, ctx, url, authenticated) {
     batch.map(async (ch) => {
       try {
         const before = typeof cursors[ch.key] === "string" ? cursors[ch.key] : null;
-        const page = ch.mediaOnly
-          ? await loadMediaOnlyChannelPage(env, ctx, ch, before, general.pageSize || 20)
-          : await loadChannelPage(env, ctx, ch, before, general.pageSize || 20);
+        // 统一走补页循环：仅媒体频道只投媒体帖；广告帖任何频道都不投（loadChannelPage 已过滤）
+        const page = await loadFilledChannelPage(env, ctx, ch, before, general.pageSize || 20);
         nextCursors[ch.key] = page.next ? String(page.next) : null;
         perChannel.push({ channel: page.info, posts: page.posts });
       } catch (err) {
