@@ -264,7 +264,12 @@ export function sanitizeHtml(input) {
 
     if (!isClose && DROP_WITH_CONTENT.has(tag)) {
       const closeIdx = source.toLowerCase().indexOf(`</${tag}`, re.lastIndex);
-      if (closeIdx === -1) break;
+      if (closeIdx === -1) {
+        // 未闭合的 <script> 等：从这里起整段丢弃。last 必须同步推进到结尾，
+        // 否则循环结束后补尾巴会把已输出过的前缀文本再 emit 一次（重复输出）
+        last = source.length;
+        break;
+      }
       const closeEnd = source.indexOf(">", closeIdx);
       re.lastIndex = closeEnd === -1 ? source.length : closeEnd + 1;
       last = re.lastIndex;

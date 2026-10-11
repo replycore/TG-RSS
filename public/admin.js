@@ -331,6 +331,36 @@ function parseAdTagsInput(raw) {
   return out;
 }
 
+/**
+ * 把用户粘贴的内容规范成公开频道用户名（与 src/util.js 的同名函数同步维护——
+ * public 静态资源无法 import src/，故复制一份）。
+ * 返回："" → 空输入；null → 认得出来但不支持（私密邀请等）；字符串 → 合法用户名。
+ * 支持：@name、name、https://t.me/name、t.me/name、t.me/s/name、t.me/name/12345、
+ *       telegram.me/name、tg://resolve?domain=name
+ */
+function normalizeChannelInput(raw) {
+  const input = String(raw ?? "").trim();
+  if (!input) return "";
+  const tg = /tg:\/\/(?:resolve)?\?[^#]*\bdomain=([^&#]+)/i.exec(input);
+  if (tg) return cleanUsername(tg[1]);
+  let s = input;
+  s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  s = s.replace(/^(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)\.?/i, "");
+  s = s.replace(/^\/+/, "");
+  if (/^(?:\+|joinchat\/|addstickers\/|addlist\/|share\/)/i.test(s)) return null;
+  if (/^c\/\d+/i.test(s)) return null;
+  s = s.replace(/^s\//i, "");
+  s = s.split(/[?#]/)[0];
+  s = s.split("/").filter(Boolean)[0] || "";
+  s = s.replace(/^@+/, "");
+  return cleanUsername(s);
+}
+
+function cleanUsername(v) {
+  const value = String(v || "").trim().replace(/^@+/, "");
+  return /^[A-Za-z0-9_]{4,64}$/.test(value) ? value : null;
+}
+
 function feedChannelNode(f) { return f.node; }
 
 /* ---------------------------------------------------------------- 频道 */
@@ -398,8 +428,13 @@ function renderChannels(body, ctx, settings) {
 
   addBtn.onclick = () => {
     const ch = currentChannel();
-    if (ch.type === "public" && !/^[A-Za-z0-9_]{4,64}$/.test(ch.username)) return toast("用户名不合法", "error");
-    if (ch.type === "private" && !/^-?\d{5,25}$/.test(ch.tgId)) return toast("频道 ID 不合法", "error");
+    if (ch.type === "public") {
+      // 与「测试」按钮/后端 validateChannel 同一套规范化：分享链接（t.me/xxx、tg://resolve?domain=xxx 等）
+      // 也能直接添加，此前前端正则 /username/ 拦掉分享链接导致「测试能过、添加被拦」
+      const username = normalizeChannelInput(ch.username);
+      if (!username) return toast("用户名或分享链接不合法", "error");
+      ch.username = username;
+    } else if (!/^-?\d{5,25}$/.test(ch.tgId)) return toast("频道 ID 不合法", "error");
     if (!ch.name) ch.name = ch.type === "public" ? ch.username : ch.tgId;
     if (channels.some((c) => c.key === keyOf(ch))) return toast("频道已存在", "error");
     channels.push({ ...ch, key: keyOf(ch), order: channels.length });

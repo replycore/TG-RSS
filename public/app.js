@@ -149,26 +149,9 @@ document.getElementById("refresh-all").onclick = async (e) => {
 
 /* ---------------------------------------------------------------- 路由 */
 
-export function parseRoute() {
-  const raw = (location.hash || "#/").replace(/^#/, "");
-  // 先把路径和 query 拆开：否则 `#/?tag=xxx` 的路径部分是 "/"，
-  // 会在下面 parts 为空时提前返回，把 ?tag= 整个丢掉（点了标签却不筛选）
-  const qIndex = raw.indexOf("?");
-  const pathPart = qIndex >= 0 ? raw.slice(0, qIndex) : raw;
-  const queryPart = qIndex >= 0 ? raw.slice(qIndex + 1) : "";
-  const parts = pathPart.split("/").filter(Boolean);
-  const query = new URLSearchParams(queryPart);
-  const tag = query.get("tag");
-  const feedRoute = () => (tag ? { name: "feed", tag } : { name: "feed" });
-  if (!parts.length) return feedRoute();
-  if (parts[0] === "c" && parts[1]) {
-    const key = decodeURIComponent(parts[1]);
-    return tag ? { name: "channel", key, tag } : { name: "channel", key };
-  }
-  if (parts[0] === "media") return { name: "media", type: parts[1] || "video", key: parts[2] ? decodeURIComponent(parts[2]) : "" };
-  if (parts[0] === "admin") return { name: "admin", tab: parts[1] || "general" };
-  return feedRoute();
-}
+// 路由解析已抽到 public/route.js（safeDecode 容错 + 可单测）；保留转发导出兼容旧引用
+export { parseRoute } from "./route.js";
+import { parseRoute } from "./route.js";
 
 function setActiveNav(name) {
   document.querySelectorAll("#main-nav a").forEach((a) => {
@@ -193,7 +176,13 @@ async function route() {
   setActiveNav(r.name === "channel" ? "feed" : r.name);
   renderSidebar();
 
-  clear(app).append(el("div", { class: "loading", text: "加载中…" }));
+  // 每次路由给视图一个专属容器：切换时 clear(app) 会让旧容器脱离文档，
+  // 晚到的异步回调（空响应/403/登录框）只操作 detached 节点，
+  // 不会覆盖当前视图（此前 root 就是 app 本身，晚到 clear(root) 会清掉新视图）
+  const view = el("div", { class: "view" });
+  view.append(el("div", { class: "loading", text: "加载中…" }));
+  clear(app).append(view);
+  app.classList.toggle("wide", r.name === "media");
 
   // 标签筛选状态：两个视图都可能带 ?tag=，其它视图先清掉回调
   ctx.feedTag = r.tag || null;
@@ -203,18 +192,18 @@ async function route() {
 
   try {
     if (r.name === "feed") {
-      await renderFeed(app, ctx);
+      await renderFeed(view, ctx);
     } else if (r.name === "channel") {
-      await renderChannel(app, ctx, r.key);
+      await renderChannel(view, ctx, r.key);
     } else if (r.name === "media") {
-      await renderMedia(app, ctx, r.type, r.key);
+      await renderMedia(view, ctx, r.type, r.key);
     } else if (r.name === "admin") {
-      await renderAdmin(app, ctx, r.tab);
+      await renderAdmin(view, ctx, r.tab);
     }
   } catch (err) {
     if (seq !== renderSeq) return;
     console.error(err);
-    clear(app).append(
+    clear(view).append(
       el("div", { class: "errorbox" }, [
         el("div", { text: err instanceof ApiError ? err.message : "页面加载失败" }),
         el("button", { class: "btn", type: "button", text: "重试", onclick: () => route() }),

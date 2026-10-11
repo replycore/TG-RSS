@@ -120,6 +120,26 @@ test("常规页渲染广告过滤卡片（内置只读 + 自定义输入框）",
   assert.ok(input, "应有自定义标签输入框");
 });
 
+test("频道 tab：粘贴分享链接可直接添加（不被前端拦）", async () => {
+  const { window, root } = await renderAdminGeneral();
+  tabLink(root, "频道").dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+
+  const inputs = [...root.querySelectorAll(".card input.input")];
+  const idInput = inputs.find((i) => (i.placeholder || "").includes("t.me/"));
+  const nameInput = inputs.find((i) => (i.placeholder || "").includes("显示名"));
+  assert.ok(idInput, "应有频道 ID 输入框");
+  idInput.value = "https://t.me/telegram";
+  if (nameInput) nameInput.value = "";
+
+  const addBtn = [...root.querySelectorAll("button")].find((b) => b.textContent.trim() === "添加");
+  addBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+
+  // 未被拦：频道进入本地表格且 key 规范化为 telegram（此前正则拦掉分享链接，只能 toast「用户名不合法」）
+  const table = root.querySelector("table.table");
+  assert.ok(table, "添加后应渲染频道表格（被拦时 channels 仍为空，不渲染表格）");
+  assert.ok(table.textContent.includes("telegram"), "分享链接应被规范化为 username=telegram");
+});
+
 test.after(() => {
   globalThis.fetch = realFetch;
 });

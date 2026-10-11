@@ -126,6 +126,11 @@ export async function getSettings(request, env) {
 export async function saveSettings(request, env, body) {
   await requireAdmin(request, env);
   const errors = [];
+  // 待写入项：先全部校验，只有 errors 为空才落盘——
+  // 否则非法值（如坏桥接地址）会先写进 KV 再抛 400，
+  // 后续媒体代理/私密抓取会拿着脏配置持续 500
+  const pending = [];
+  let channelsToSave = null;
 
   if (body.general) {
     const general = {
@@ -155,7 +160,7 @@ export async function saveSettings(request, env, body) {
       }
       general.adTagsExtra = cleaned;
     }
-    await writeJSON(env, KEYS.general, general);
+    pending.push([KEYS.general, general]);
   }
 
   if (body.media) {
@@ -168,7 +173,7 @@ export async function saveSettings(request, env, body) {
       proxyAll: body.media.proxyAll !== false,
       pageSize: clampInt(body.media.pageSize, 6, 60, 24),
     };
-    await writeJSON(env, KEYS.media, mediaSettings);
+    pending.push([KEYS.media, mediaSettings]);
   }
 
   if (body.bridge) {
@@ -184,7 +189,7 @@ export async function saveSettings(request, env, body) {
       patch.token = existing.token || "";
     }
     if (!patch.token && (env.BRIDGE_TOKEN || "")) patch.token = env.BRIDGE_TOKEN;
-    await writeJSON(env, KEYS.bridge, patch);
+    pending.push([KEYS.bridge, patch]);
   }
 
   if (body.channels) {
@@ -205,11 +210,14 @@ export async function saveSettings(request, env, body) {
         seen.add(channel.key);
         normalized.push(channel);
       }
-      if (!errors.length) await saveChannels(env, normalized);
+      channelsToSave = normalized;
     }
   }
 
   if (errors.length) throw new HttpError(400, errors.join("；"), "invalid_settings");
+
+  for (const [key, value] of pending) await writeJSON(env, key, value);
+  if (channelsToSave) await saveChannels(env, channelsToSave);
 
   return { ok: true, ...(await getSettings(request, env)) };
 }

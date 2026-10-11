@@ -167,3 +167,12 @@ test("extractTags：抽取消息里的 #话题 标签", () => {
   assert.deepEqual(extractTags("#a #A #a"), ["a"]);
   assert.deepEqual(extractTags("#新闻，#体育。"), ["新闻", "体育"]);
 });
+
+test("sanitizeHtml：未闭合的 <script> 整段丢弃且前缀不重复", () => {
+  // 此前 bug：未闭合 DROP 标签 break 时 last 未推进，循环后补尾巴把前缀 emit 两次
+  assert.equal(sanitizeHtml("hello<script>alert(1)"), "hello");
+  assert.equal(sanitizeHtml("前缀文本<style>body{display:none}"), "前缀文本");
+  assert.equal(sanitizeHtml("a<b>c</b><iframe src=x>"), "a<b>c</b>");
+  // 闭合的照常整段丢弃
+  assert.equal(sanitizeHtml("x<script>alert(1)</script>y"), "xy");
+});

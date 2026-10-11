@@ -177,6 +177,34 @@ async function handleApi(request, env, ctx, url) {
 
 /* ----------------------------------------------------------------- 入口 */
 
+/**
+ * CSP（仅 HTML 文档注入）：
+ * - script 只允许同源 + Turnstile 域名（index.html 无内联 script）
+ * - style 放开 'unsafe-inline'：视图大量用 JS 设置内联 style 属性（CSSOM 不受限，但保守起见）
+ * - img/media/connect 放开 https:（头像外链 t.me、媒体代理上游、Turnstile API）
+ * - object-src 'none' / base-uri 'self' 堵对象注入与 base 劫持
+ */
+const CSP_HEADER = [
+  "default-src 'self'",
+  "script-src 'self' https://challenges.cloudflare.com",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' blob: https:",
+  "connect-src 'self' https://challenges.cloudflare.com",
+  "frame-src https://challenges.cloudflare.com",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join("; ");
+
+function withCsp(response) {
+  const contentType = response.headers.get("content-type") || "";
+  if (!contentType.includes("text/html")) return response;
+  const headers = new Headers(response.headers);
+  headers.set("content-security-policy", CSP_HEADER);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
+
 export async function handleRequest(request, env, ctx = {}) {
   const url = new URL(request.url);
   try {
@@ -184,7 +212,7 @@ export async function handleRequest(request, env, ctx = {}) {
       return await handleApi(request, env, ctx, url);
     }
     if (request.method === "OPTIONS") return new Response(null, { status: 204 });
-    return await serveStatic(request, env, ctx);
+    return withCsp(await serveStatic(request, env, ctx));
   } catch (err) {
     if (err instanceof HttpError) {
       const headers = {};

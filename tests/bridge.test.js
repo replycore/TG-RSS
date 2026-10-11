@@ -138,3 +138,18 @@ test("桥接鉴权：x-token / Bearer / ?token= 都认，错误令牌拒绝", ()
   assert.equal(equalString("abc", "abc"), true);
   assert.equal(equalString("abc", "abd"), false);
 });
+
+test("桥接鉴权：真实 Node http headers（普通对象，无 .get）不抛错", () => {
+  const token = "bridge-token-real";
+  // 真实 http.createServer 的 req.headers：普通对象、键小写、值为字符串（或字符串数组）
+  const realReq = (headers) => ({ headers, method: "GET" });
+  assert.equal(authorized(new URL("http://b/feed"), realReq({ "x-token": token }), token), true);
+  assert.equal(authorized(new URL("http://b/feed"), realReq({ authorization: `Bearer ${token}` }), token), true);
+  assert.equal(authorized(new URL("http://b/feed"), realReq({ "x-token": ["nope"] }), token), false);
+  // 数组形式（重复头）：join 后应拒绝
+  assert.equal(authorized(new URL("http://b/feed"), realReq({ "x-token": [token, token] }), token), false, "拼接值不等于单 token");
+  // 无头 + 无 query
+  assert.equal(authorized(new URL("http://b/feed"), realReq({}), token), false);
+  // 完全没有 headers 字段也不炸
+  assert.equal(authorized(new URL("http://b/feed"), {}, token), false);
+});
