@@ -249,9 +249,13 @@ npm start                   # 启动，监听 8788
 
 监听地址默认只绑 `127.0.0.1`；要让局域网访问需显式 `BRIDGE_HOST=0.0.0.0`。
 
-> ⚠️ **升级顺序：先升 bridge，再升 TG-RSS（Worker/Pages）。** 新版 Worker 只发签名头，
-> 旧的 bridge 不认签名会一律 401（无回退）。若必须先升 Worker，可把 bridge 的
-> `BRIDGE_SIGN_WINDOW_SEC` 与签名开关确认后再升；两版不兼容是刻意的安全取舍。
+> ⚠️ **升级顺序：先升 bridge，再升 TG-RSS（Worker/Pages）。** 两版**双向不兼容**，无配置可绕：
+> - 先升 bridge、TG-RSS 还在 v1.2.3 及更早 → 旧版靠 `?token=` 查询参数，而新版 bridge 已移除该支持 → 私密频道立即 401；
+> - 先升 TG-RSS、bridge 还是旧版 → 新版只发签名头（`x-timestamp` + `x-signature`），不再回退 `x-token`（见 `src/bridge-sign.js`）→ 旧 bridge 不认签名 → 同样 401。
+>
+> bridge 侧的鉴权顺序固定为「先验签名 → 再验 `Bearer`/`x-token` 头」，**没有开关**；
+> `BRIDGE_SIGN_WINDOW_SEC` 只调时间窗，不影响是否启用签名。若 bridge 与 TG-RSS 不在同一台机器上，
+> 请把两者升级安排在同一时段。
 ```
 
 ### 让 Worker 能访问到它

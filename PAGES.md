@@ -78,9 +78,10 @@ CF 边缘按 Host 头路由到 Pages 项目，立即生效。可选地在 Pages 
 
 TG-RSS 部署在 Pages，私密频道桥接 `bridge/` **仍跑在你自己机器上**，需自行 `git pull` + 重启。
 
-> ⚠️ **升级顺序：先升 bridge，再升 TG-RSS。** v1.2.4 起 TG-RSS 对桥接只用 HMAC 签名认证
-> （token 不进任何 URL），旧版 bridge 不认签名会返回 401 且**无回退**——这是刻意的安全取舍。
-> 详见 [README §9 私密频道桥接](./README.md#9-私密频道桥接bridge)。
+> ⚠️ **升级顺序：必须先升 bridge，再升 TG-RSS。** 两侧双向不兼容且无开关可绕：
+> 新版 TG-RSS 只发 HMAC 签名头（旧的 `x-token` 回退已按安全要求移除），
+> 旧版 TG-RSS 用 `?token=` 而新版 bridge 已删除该支持——任一方向错序都会让私密频道 401。
+> 请把 bridge 与 TG-RSS 的升级安排在同一时段。详见 [README §9 私密频道桥接](./README.md#9-私密频道桥接bridge)。
 
 ## 环境变量与 Secrets
 
