@@ -38,6 +38,11 @@ export function toEntityArg(value) {
   return s.replace(/^@/, "");
 }
 
+// 仅供测试注入假 client（避免测试连真实 Telegram）
+export function __setClientForTest(c) {
+  clientPromise = c ? Promise.resolve(c) : null;
+}
+
 export async function resolvePeer(value) {
   const client = await getClient();
   return client.getEntity(toEntityArg(value));
@@ -103,16 +108,26 @@ export async function downloadThumbToCache(peer, msg, size) {
   const dir = config.cacheDir;
   fs.mkdirSync(dir, { recursive: true });
   const base = `thumb_${peer?.id ?? "x"}_${msg.id}`;
-  const existing = fs.readdirSync(dir).find((f) => f.startsWith(`${base}.`) && !f.endsWith(".part"));
-  if (existing) {
-    const p = path.join(dir, existing);
-    if (fs.statSync(p).size > 0) return p;
-  }
+  // 与 downloadMediaToCache 同标准：排除 .part 中断残留，且必须 size > 0
+  const existing = fs.readdirSync(dir).find((f) => {
+    if (!f.startsWith(`${base}.`) || f.endsWith(".part")) return false;
+    try {
+      return fs.statSync(path.join(dir, f)).size > 0;
+    } catch {
+      return false;
+    }
+  });
+  if (existing) return path.join(dir, existing);
   const client = await getClient();
-  const buf = await client.downloadMedia(msg, undefined, size);
+  // teleproto 的 downloadMedia(messageOrMedia, downloadParams) 只接受两参：
+  // 位置式第三参会静默丢弃（thumb 变 undefined → 下载完整视频）。thumb 必须走对象形式。
+  const buf = await client.downloadMedia(msg, { thumb: size });
   if (!buf || !buf.length) throw new Error("thumb_empty");
+  // .part + rename 原子写入：中断不留截断文件（截断 .jpg 会被 size>0 判定永久命中）
+  const tmp = path.join(dir, `${base}.jpg.part`);
   const file = path.join(dir, `${base}.jpg`);
-  fs.writeFileSync(file, buf);
+  fs.writeFileSync(tmp, buf);
+  fs.renameSync(tmp, file);
   return file;
 }
 

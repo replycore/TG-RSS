@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 
 import { classifyMedia, formatSize, formatDuration, messageToPost, mediaOf, peerKeyArg } from "../bridge/post.js";
 
@@ -148,4 +150,71 @@ test("pickVideoThumb：选最大可用缩略图，跳过 Stripped/Path/Empty", a
   assert.equal(picked.type, "i", "应选 bytes 更大的 PhotoCachedSize");
   assert.equal(pickVideoThumb({ media: {} }), null, "无 thumbs → null");
   assert.equal(pickVideoThumb({ media: { document: { thumbs: [mk("PhotoStrippedSize", { bytes: Buffer.alloc(10) })] } } }), null, "只剩 Stripped → null（宁可黑屏不发坏图）");
+});
+
+test("downloadThumbToCache：必须用 { thumb } 对象形式，且 .part 原子写入", async () => {
+  const os = await import("node:os");
+  const fsp = await import("node:fs/promises");
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "tgthumb-"));
+  process.env.CACHE_DIR = dir;
+  const mod = await import("../bridge/client.js");
+  const { config } = await import("../bridge/config.js");
+  config.cacheDir = dir;
+
+  const calls = [];
+  const fakeClient = {
+    downloadMedia: async (...args) => {
+      calls.push(args);
+      return Buffer.from("jpeg-bytes");
+    },
+  };
+  mod.__setClientForTest(fakeClient);
+
+  const size = { className: "PhotoSize", type: "i", size: 200 };
+  const msg = { id: 77, media: { document: { thumbs: [size] } } };
+  const peer = { id: -100123 };
+
+  const file = await mod.downloadThumbToCache(peer, msg, size);
+  assert.equal(calls.length, 1, "应调用一次 downloadMedia");
+  assert.equal(calls[0].length, 2, "必须只传两参（第三位置参会静默丢弃 → 下完整视频）");
+  assert.deepEqual(calls[0][1], { thumb: size }, "thumb 必须走对象形式 downloadParams");
+  assert.equal(file, path.join(dir, "thumb_-100123_77.jpg"));
+  assert.equal(fs.readFileSync(file, "utf8"), "jpeg-bytes");
+  const left = fs.readdirSync(dir);
+  assert.ok(!left.some((f) => f.endsWith(".part")), `不应残留 .part：${left.join(",")}`);
+
+  // 缓存复用：不再下载
+  const again = await mod.downloadThumbToCache(peer, msg, size);
+  assert.equal(calls.length, 1, "命中缓存不应重复下载");
+  assert.equal(again, file);
+
+  // 截断文件（size>0 的残留 .jpg）不能被永久命中：删除后重下
+  fs.unlinkSync(file);
+  const third = await mod.downloadThumbToCache(peer, msg, size);
+  assert.equal(calls.length, 2, "文件缺失应重新下载");
+  assert.ok(fs.existsSync(third));
+
+  // .part 残留不得被当作有效缓存
+  fs.unlinkSync(third);
+  fs.writeFileSync(path.join(dir, "thumb_-100123_77.jpg.part"), "partial");
+  const fourth = await mod.downloadThumbToCache(peer, msg, size);
+  assert.equal(calls.length, 3, ".part 残留应被忽略并重下");
+  assert.equal(fs.readFileSync(fourth, "utf8"), "jpeg-bytes");
+
+  mod.__setClientForTest(null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test("downloadThumbToCache：下载空结果应抛错且不落文件", async () => {
+  const os = await import("node:os");
+  const fsp = await import("node:fs/promises");
+  const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "tgthumb2-"));
+  const mod = await import("../bridge/client.js");
+  const { config } = await import("../bridge/config.js");
+  config.cacheDir = dir;
+  mod.__setClientForTest({ downloadMedia: async () => Buffer.alloc(0) });
+  await assert.rejects(() => mod.downloadThumbToCache({ id: -1 }, { id: 9 }, { className: "PhotoSize" }), /thumb_empty/);
+  assert.equal(fs.readdirSync(dir).filter((f) => !f.endsWith(".part")).length, 0, "空结果不应留下正式文件");
+  mod.__setClientForTest(null);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

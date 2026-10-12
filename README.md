@@ -232,8 +232,26 @@ npm install
 npm run login               # 按提示输入验证码，自动写入 TG_SESSION
 npm start                   # 启动，监听 8788
 
-鉴权三选一：`x-token` 头（TG-RSS Worker 用）、`Authorization: Bearer`、`?token=` 查询参数。
+鉴权按优先级（见 `bridge/auth.js`）：
+
+1. **HMAC 签名**（TG-RSS Worker 默认）——token 不出现在任何请求/URL 中：
+
+   ```
+   x-timestamp : <Unix 秒>
+   x-signature : base64(HMAC-SHA256(token, `${ts}\n${METHOD}\n${path}?${query}`))
+   ```
+
+   时间窗 ±300s（`BRIDGE_SIGN_WINDOW_SEC` 可调 60~3600）且绑定方法与完整路径：单次请求泄露也无法跨路径或过窗重放。
+2. `x-token` 请求头 / `Authorization: Bearer <token>`（旧版 Worker 兼容、curl 调试用）。
+3. Origin 白名单（可选 `BRIDGE_ALLOWED_ORIGINS`）：仅约束「头认证」请求，未配置则不限制。
+
+> `?token=` 查询参数已于 v1.2.4 移除：媒体/头像一律经 TG-RSS 服务端代理，浏览器不再直连 bridge，token 从根上不进 HTML/URL。
+
 监听地址默认只绑 `127.0.0.1`；要让局域网访问需显式 `BRIDGE_HOST=0.0.0.0`。
+
+> ⚠️ **升级顺序：先升 bridge，再升 TG-RSS（Worker/Pages）。** 新版 Worker 只发签名头，
+> 旧的 bridge 不认签名会一律 401（无回退）。若必须先升 Worker，可把 bridge 的
+> `BRIDGE_SIGN_WINDOW_SEC` 与签名开关确认后再升；两版不兼容是刻意的安全取舍。
 ```
 
 ### 让 Worker 能访问到它
@@ -260,10 +278,11 @@ cloudflared tunnel --url http://127.0.0.1:8788
 | `GET /health` | 存活检查 |
 | `GET /feed?channel=&before=&limit=` | 频道消息（结构与公开频道一致） |
 | `GET /media?ch=&m=` | 媒体文件，支持 `Range`，磁盘缓存 |
+| `GET /thumb?ch=&m=` | 视频缩略图（`<video poster>`，bridge 侧代理的媒体用） |
 | `GET /avatar?ch=` | 频道头像 |
 
 > 媒体首次播放/下载会触发桥接去 Telegram 拉取并缓存到 `bridge/cache/`，之后走本地缓存。
-> 桥接收到的媒体 URL 会由 Worker 的 `/api/media/proxy` 转发（自动附加令牌）。
+> 桥接收到的媒体 URL 会由 TG-RSS 的 `/api/media/proxy` 转发（服务端注入签名头，token 不进 URL）。
 
 ## 10. KV 数据结构
 

@@ -74,6 +74,14 @@ CF 边缘按 Host 头路由到 Pages 项目，立即生效。可选地在 Pages 
 
 > 如果要在 Workers 上绑定域名，则必须把该域名的 zone 托管在 CF 账号内——这是 Workers 的限制。
 
+## 桥接（bridge）用户须知
+
+TG-RSS 部署在 Pages，私密频道桥接 `bridge/` **仍跑在你自己机器上**，需自行 `git pull` + 重启。
+
+> ⚠️ **升级顺序：先升 bridge，再升 TG-RSS。** v1.2.4 起 TG-RSS 对桥接只用 HMAC 签名认证
+> （token 不进任何 URL），旧版 bridge 不认签名会返回 401 且**无回退**——这是刻意的安全取舍。
+> 详见 [README §9 私密频道桥接](./README.md#9-私密频道桥接bridge)。
+
 ## 环境变量与 Secrets
 
 - **全部配置存储在 KV**（`TG_RSS_KV`），Worker 与 Pages 共用同一个 namespace，切换部署形态零数据迁移。
