@@ -22,8 +22,7 @@ TG-RSS 同一份代码兼容 **Cloudflare Workers** 与 **Cloudflare Pages** 两
 | `src/router.js` → `src/api/*` → `src/tg/*` | 业务代码（API / RSS / 解析 / 签名） |
 | `functions/[[path]].js` | **Pages 桥接层**：API/RSS 请求转交 `handleRequest`；其余走静态资源或 `context.next()`（SPA 回退） |
 | `public/` | 静态资源（`_headers`、前端 JS/CSS/HTML） |
-| `wrangler.pages.jsonc` | Pages 部署配置（项目名 / 生产分支 / compat / 输出目录） |
-| `wrangler.deploy.jsonc` | Workers 部署配置（回退用） |
+| `wrangler.deploy.jsonc` | Workers 部署配置（本地文件，含真实账号/域名，不入库；模板见 `wrangler.worker.example.jsonc`） |
 
 ## 当前状态
 
@@ -85,6 +84,9 @@ CF 边缘按 Host 头路由到 Pages 项目，立即生效。可选地在 Pages 
 ## 回退到 Workers
 
 ```bash
+# 首次：从模板创建本地配置（不入库），填入 account_id / KV id / 域名
+cp wrangler.worker.example.jsonc wrangler.deploy.jsonc
+
 wrangler deploy --config wrangler.deploy.jsonc
 ```
 
