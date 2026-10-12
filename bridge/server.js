@@ -4,9 +4,13 @@
  * 启动：npm install && npm run login && npm start
  * 接口：
  *   GET /health            健康检查（无需令牌）
- *   GET /feed?channel=&before=&limit=&token=   频道消息（与 Worker 约定的结构）
+ *   GET /feed?channel=&before=&limit=        频道消息（与 Worker 约定的结构）
  *   GET /media?ch=&m=      媒体文件（支持 Range，命中磁盘缓存）
+ *   GET /thumb?ch=&m=      视频缩略图（<video poster>）
  *   GET /avatar?ch=        频道头像
+ *
+ * 鉴权：HMAC 签名（x-timestamp + x-signature）优先，兼容 x-token / Bearer；
+ *      ?token= 查询参数已于 v1.2.4 移除。
  */
 import http from "node:http";
 import fs from "node:fs";

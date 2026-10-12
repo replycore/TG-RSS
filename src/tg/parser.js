@@ -297,8 +297,10 @@ function parsePost(blockHtml) {
 
   const views = textOf(blockHtml, "tgme_widget_message_views");
   const comments = textOf(blockHtml, "tgme_widget_message_comments");
-  const authorName = textOf(blockHtml, "tgme_widget_message_author_name");
-  const authorHref = firstAttrInClass(blockHtml, "tgme_widget_message_author_name", "href");
+  // t.me 实测：类名是 tgme_widget_message_owner_name（在 <a> 内），
+// 没有 tgme_widget_message_author_name —— 用后者会让 author 恒 null，"转发自…"永不显示。
+  const authorName = textOf(blockHtml, "tgme_widget_message_owner_name");
+  const authorHref = firstAttrInClass(blockHtml, "tgme_widget_message_owner_name", "href");
 
   const media = parseMedia(blockHtml);
 

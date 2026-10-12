@@ -2,8 +2,11 @@
  * Cloudflare Turnstile 人机验证（/setup /login /password）。
  *
  * 配置（环境变量，缺省即整体跳过校验，向后兼容）：
- *   TURNSTILE_SECRET    —— 服务端密钥，设置后即启用校验
+ *   TURNSTILE_SECRET    —— 服务端密钥
  *   TURNSTILE_SITE_KEY  —— 前端站点密钥，通过 /api/config 下发给页面渲染
+ *
+ * ⚠️ 必须双配才启用（见 turnstileEnabled）：只配 SECRET 时前端拿不到 sitekey、
+ * getToken() 恒空 → 后端恒 403 → 登录/初始化永久锁死。
  *
  * 校验走 Cloudflare 官方 siteverify；网络失败时保守拒绝（fail-closed），
  * 避免验证服务不可用时登录口完全敞开。

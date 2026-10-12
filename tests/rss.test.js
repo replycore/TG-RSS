@@ -90,8 +90,11 @@ test("renderRss：条目顺序与 RSS 字段齐全", () => {
 test("renderRss：HTML 被转义，脚本不会破坏 XML", () => {
   const xml = renderRss({ title: "t", link: "https://example.com/", description: "d", posts: samplePosts(), origin: "https://example.com" });
   assert.ok(!/<script>/i.test(xml), "不应出现原始 <script>");
-  assert.ok(xml.includes("&lt;p&gt;含 "), "正文 HTML 应被转义");
+  // description 走纯文本（textPlain/htmlToText），正文里的标签被剥掉而不是转义输出；
+  // 其余字段（title/link 等）的 HTML 仍必须转义
+  assert.ok(!/<p>含 /.test(xml), "正文 HTML 不应原样进入 description");
   assert.ok(xml.includes("A &amp; B"), "& 应被转义");
+  assert.ok(xml.includes("&lt;script&gt;") || !/<script>/i.test(xml), "脚本不得破坏 XML");
   // XML 里不应残留未转义的 <、& （头与标签之外）
   const body = xml.replace(/<[^>]+>/g, "");
   assert.ok(!/[<&]/.test(body.replace(/&[a-z]+;|&#\d+;/g, "")), "文本节点里不应有裸 < 或 &");
@@ -155,4 +158,46 @@ test("RSS：截断不劈开 emoji，输出不含孤立代理项与非法控制�
     () => new TextDecoder("utf-8", { fatal: true }).decode(new TextEncoder().encode(xml)),
     "输出必须是合法 UTF-8",
   );
+});
+
+test("RSS enclosure MIME：代理路径无扩展名时按 media.type 给合法 MIME", async () => {
+  const { renderRss } = await import("../src/api/rss.js");
+  const xml = renderRss({
+    title: "t",
+    link: "https://e.com",
+    description: "d",
+    selfHref: "https://e.com/rss.xml",
+    origin: "https://e.com",
+    posts: [
+      { id: "c/1", url: "https://t.me/c/1", date: "2024-05-01T10:00:00Z", textPlain: "v",
+        media: [{ type: "video", src: "/api/media/proxy?u=https%3A%2F%2Fbridge%2Fmedia%3Fch%3D-1%26m%3D2" }] },
+      { id: "c/2", url: "https://t.me/c/2", date: "2024-05-01T11:00:00Z", textPlain: "i",
+        media: [{ type: "image", src: "/api/media/proxy?u=https%3A%2F%2Fbridge%2Fmedia%3Fch%3D-1%26m%3D3" }] },
+      { id: "c/3", url: "https://t.me/c/3", date: "2024-05-01T12:00:00Z", textPlain: "a",
+        media: [{ type: "audio", src: "/api/media/proxy?u=https%3A%2F%2Fbridge%2Fmedia%3Fch%3D-1%26m%3D4" }] },
+    ],
+  });
+  const types = [...xml.matchAll(/type="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(types.includes("video/mp4"), `video 应为 video/mp4，实际 ${types.join(",")}`);
+  assert.ok(types.includes("image/jpeg"), `image 应为 image/jpeg，实际 ${types.join(",")}`);
+  assert.ok(types.includes("audio/mpeg"), `audio 应为 audio/mpeg，实际 ${types.join(",")}`);
+  assert.ok(!types.some((t) => /\/mpeg$/.test(t) && !t.startsWith("audio")), `不应有 image/mpeg 这类非法 MIME：${types.join(",")}`);
+});
+
+test("RSS description 用纯文本，不输出 HTML 标签字面量", async () => {
+  const { renderRss } = await import("../src/api/rss.js");
+  // 真实数据里 textPlain 与 textHtml 并存（parser/bridge 都产出两者）；
+// textPlain 缺失时应由 textHtml 兜底转纯文本
+  const xml = renderRss({
+    title: "t", link: "https://e.com", description: "d", selfHref: "https://e.com/rss.xml", origin: "https://e.com",
+    posts: [{ id: "c/1", url: "https://t.me/c/1", date: "2024-05-01T10:00:00Z",
+      textPlain: "看这个链接 正文 第二行",
+      textHtml: '<a href="https://t.me/x">链接</a>正文<br>第二行' }],
+  });
+  // 取 item 内的 description（XML 里第一个 <description> 是频道级的）
+  const item = /<item>[\s\S]*?<\/item>/.exec(xml)[0];
+  const desc = /<description>([\s\S]*?)<\/description>/.exec(item)[1];
+  assert.ok(!desc.includes("&lt;a"), `description 不应含转义后的标签源码：${desc}`);
+  assert.ok(!desc.includes("<a "), `description 不应含原始标签：${desc}`);
+  assert.ok(desc.includes("链接") && desc.includes("正文"), `应保留正文文本：${desc}`);
 });

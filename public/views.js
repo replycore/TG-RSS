@@ -253,7 +253,10 @@ export async function renderChannel(root, ctx, key) {
         added += 1;
       });
       renderTagBar();
-      if (!before || added === 0) finished = true;
+      // tag 模式下当页零匹配 ≠ 到底：后端按 tag 过滤后 next 游标照常返回，
+      // 更早的匹配帖可能在下一页。只有 !before（后端说没下一页）才算 finished
+      // （对齐 views.js:138 信息流逻辑：(!hasPending || (added === 0 && data.done))）
+      if (!before) finished = true;
 
       if (finished) {
         clear(footer).append(el("div", { class: "muted", style: { textAlign: "center", padding: "14px" }, text: "到底了" }));

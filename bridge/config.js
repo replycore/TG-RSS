@@ -14,10 +14,20 @@ export function loadEnv(file = path.join(here, ".env")) {
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
     if (eq < 0) continue;
-    const key = trimmed.slice(0, eq).trim();
-    let value = trimmed.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    // 容忍 `export KEY=value`（shell 习惯误写进 .env）：剥掉前缀再取键名，
+    // 否则键会变成 "export TG_API_ID"，排错时只看到「缺少环境变量」
+    const cleaned = trimmed.replace(/^export\s+/, "");
+    const eq2 = cleaned.indexOf("=");
+    if (eq2 < 0) continue;
+    const key = cleaned.slice(0, eq2).trim();
+    let value = cleaned.slice(eq2 + 1).trim();
+    const quoted = (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"));
+    if (quoted) {
       value = value.slice(1, -1);
+    } else {
+      // 行内注释仅在未加引号时剥离：KEY=abc # 备注 → abc；"abc # x" 保持原样
+      const hash = value.indexOf(" #");
+      if (hash >= 0) value = value.slice(0, hash).trim();
     }
     out[key] = value;
   }

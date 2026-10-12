@@ -5,7 +5,7 @@
  *   GET /api/rss?channel=k  单个频道
  *   可选 limit=5..200（默认 50）
  */
-import { clampInt, HttpError } from "../util.js";
+import { clampInt, HttpError, htmlToText } from "../util.js";
 import { getGeneral } from "../store.js";
 import { getFeed, getChannelPosts } from "./content.js";
 import { checkRssToken } from "../rss-auth.js";
@@ -96,7 +96,10 @@ function enclosureOf(post, origin = "") {
     try { return new URL(target, "https://placeholder.invalid").pathname; } catch { return ""; }
   })();
   const ext = (path.split(".").pop() || "").toLowerCase();
-  const type = MIME_BY_EXT[ext] || `${media.type}/mpeg`;
+  // v1.2.4 起媒体几乎全走 /api/media/proxy?u=…（路径无扩展名），ext 恒为空串，
+  // 回退必须按 media.type 给合法 MIME（`${media.type}/mpeg` 会产出 image/mpeg 这类非法值）。
+  const byType = { video: "video/mp4", image: "image/jpeg", audio: "audio/mpeg" };
+  const type = MIME_BY_EXT[ext] || byType[media.type] || "application/octet-stream";
   return `  <enclosure url="${escapeXml(target)}" length="0" type="${escapeXml(type)}"/>\n`;
 }
 
@@ -105,9 +108,9 @@ function buildItem(post, opts = {}) {
   const channelName = post.channelName || post.channel || "";
   const link = post.url || `${origin}/#/c/${encodeURIComponent(post.channelKey || post.channel || "")}`;
   const pubDate = rfc822(post.date);
-  const body = post.textHtml
-    ? escapeXml(post.textHtml)
-    : escapeXml(post.textPlain || post.text || "");
+  // description 用纯文本：escapeXml(textHtml) 会把 <a>/<br> 变成字面量标签，
+  // 阅读器里看到的是标签源码而非链接+正文（RSS 无 HTML 渲染约定）。
+  const body = escapeXml(post.textPlain || post.text || htmlToText(post.textHtml || ""));
   const lines = ["<item>"];
   lines.push(`  <title>${escapeXml(itemTitle(post))}</title>`);
   lines.push(`  <link>${escapeXml(link)}</link>`);

@@ -311,7 +311,9 @@ function renderVideo(item, post, ctx) {
     preload: "metadata",
     playsinline: true,
     src,
-    poster: item.thumb || undefined,
+    // bridge 媒体的 thumb 是裸 bridge URL（无认证 → 401）；thumbSrc 是站内代理路径。
+    // 全屏 openLightbox 已用 thumbSrc，内联 video 也要一致，否则信息流 poster 黑屏。
+    poster: item.thumbSrc || item.thumb || undefined,
   });
   box.append(video);
   const bar = el("div", { class: "media-inline" });

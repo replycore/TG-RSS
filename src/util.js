@@ -291,6 +291,17 @@ export function sanitizeHtml(input) {
   return out;
 }
 
+/** 数字字符引用解码：非法码点（0、>0x10FFFF、代理区）原样保留，避免产出坏字符 */
+function safeCodePoint(code) {
+  if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return "";
+  if (code >= 0xd800 && code <= 0xdfff) return "";
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return "";
+  }
+}
+
 export function htmlToText(input) {
   if (!input) return "";
   return String(input)
@@ -303,6 +314,9 @@ export function htmlToText(input) {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    // 数字字符引用：&#65; → A、&#x22; → "（t.me 的 <a href="…"> 常带这类实体）
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => safeCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => safeCodePoint(parseInt(dec, 10)))
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -408,6 +422,9 @@ export function normalizeChannelInput(raw) {
   s = s.split(/[?#]/)[0];
   s = s.split("/").filter(Boolean)[0] || "";
   s = s.replace(/^@+/, "");
+  // 剥完为空（"https://t.me"、"@"）不是「私密邀请」——返回 "" 让 validateChannel
+  // 报「请输入频道用户名」，别把用户指引到用私密频道方式添加
+  if (!s) return "";
   return cleanUsername(s);
 }
 
@@ -420,13 +437,20 @@ function cleanUsername(v) {
 export function extractTags(text) {
   const out = [];
   const seen = new Set();
-  // 前一个字符不能是文字/数字（避免把 C# 之类当标签），其余标点后都算标签起点
-  const re = /(?<![\p{L}\p{N}_])#([\p{L}\p{N}_]{1,32})/gu;
   const str = String(text ?? "");
+  const body = /[\p{L}\p{N}_]/u;
+  // 上一次匹配的结束位置：#a#b 里第二个 # 正好落在上次匹配结尾处，属连写合法起点；
+  // 而 C# 的 # 前面是文字且不在标签边界上，判非法（避免把 C# 当标签）。
+  const re = /#([\p{L}\p{N}_]{1,64})/gu;
+  let lastEnd = -1;
   let m;
   while ((m = re.exec(str)) !== null) {
+    const prev = m.index > 0 ? str[m.index - 1] : "";
+    const isAdjacent = m.index === lastEnd; // 连写：#紧接上一个标签
+    if (prev && body.test(prev) && !isAdjacent) continue;
     const tag = m[1].replace(/[.,;:!?，。；：！？、]+$/, "");
     if (!tag) continue;
+    lastEnd = m.index + m[0].length;
     const key = tag.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);

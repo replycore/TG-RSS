@@ -180,3 +180,29 @@ test("sanitizeHtml：未闭合的 <script> 整段丢弃且前缀不重复", () =
   // 闭合的照常整段丢弃
   assert.equal(sanitizeHtml("x<script>alert(1)</script>y"), "xy");
 });
+
+test("htmlToText 解码数字字符引用", async () => {
+  const { htmlToText } = await import("../src/util.js");
+  assert.equal(htmlToText("a&#65;b&#x22;c&nbsp;d"), 'aAb"c d');
+  assert.equal(htmlToText("&#x1F600;"), "\u{1F600}", "应支持代理对外的 emoji 码点");
+  assert.equal(htmlToText("&#0;"), "", "NUL 非法码点应丢弃而非产出坏字符");
+  assert.equal(htmlToText("&#xD800;"), "", "代理区码点应丢弃");
+  assert.equal(htmlToText("a &amp; b &lt;t&gt;"), "a & b <t>", "命名实体照旧");
+});
+
+test("extractTags 连写、超长标签", async () => {
+  const { extractTags } = await import("../src/util.js");
+  assert.deepEqual(extractTags("#a#b"), ["a", "b"], "连写 hashtag 两个都要");
+  assert.deepEqual(extractTags("写 C# 代码"), [], "C# 不算标签");
+  const long = "a".repeat(40);
+  assert.deepEqual(extractTags("#" + long), [long], "40 字符标签应完整保留（此前静默截到 32）");
+  assert.deepEqual(extractTags("结尾 #done."), ["done"], "句尾标点应剥离");
+});
+
+test("normalizeChannelInput 剥空返回空串而非 null（报错文案不误导）", async () => {
+  const { normalizeChannelInput } = await import("../src/util.js");
+  assert.equal(normalizeChannelInput("https://t.me"), "", "空链接应走「请输入用户名」分支");
+  assert.equal(normalizeChannelInput("@"), "");
+  assert.equal(normalizeChannelInput("https://t.me/telegram"), "telegram");
+  assert.equal(normalizeChannelInput("https://t.me/joinchat/AAA"), null, "私密邀请仍应是 null");
+});

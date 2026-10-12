@@ -358,6 +358,8 @@ function normalizeChannelInput(raw) {
   s = s.split(/[?#]/)[0];
   s = s.split("/").filter(Boolean)[0] || "";
   s = s.replace(/^@+/, "");
+  // 剥完为空返回 ""（提示输入用户名），与 src/util.js 后端版一致
+  if (!s) return "";
   return cleanUsername(s);
 }
 
