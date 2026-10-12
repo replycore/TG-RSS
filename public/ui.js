@@ -118,7 +118,7 @@ export function openLightbox(item) {
         playsinline: true,
         preload: "auto",
         src,
-        poster: item.thumb || undefined,
+        poster: item.thumbSrc || item.thumb || undefined,
       }),
     );
   } else if (item.type === "audio" && src) {

@@ -95,13 +95,33 @@ export function mediaOf(msg, peer) {
     {
       type,
       url,
-      thumb: null,
+      // 视频缩略图（document 预览帧）：供 <video poster> 显示，防黑屏
+      thumb: type === "video" ? `${base}/thumb?ch=${encodeURIComponent(peerKeyArg(peer))}&m=${msg.id}` : null,
       name: type === "file" || type === "audio" ? fileNameOf(msg) : null,
       size: msg.document ? formatSize(msg.document.size) : null,
       duration: durationOf(msg),
       permalink: null,
     },
   ];
+}
+
+/**
+ * 挑视频消息里最大的可用缩略图（PhotoSize 对象，供 downloadMedia 的 thumb 参数）。
+ * 跳过 Stripped（raw PE 格式不是可直接显示的 JPEG）/Path/Empty。
+ */
+export function pickVideoThumb(msg) {
+  const doc = msg?.media?.document;
+  const thumbs = doc && Array.isArray(doc.thumbs) ? doc.thumbs : [];
+  const usable = thumbs.filter((t) => {
+    const n = t?.className || "";
+    return n === "PhotoCachedSize" || n === "PhotoSize" || n === "PhotoSizeProgressive";
+  });
+  const sizeOf = (t) => {
+    if (t.bytes) return t.bytes.length;
+    if (Array.isArray(t.sizes)) return Math.max(...t.sizes.map(Number), 0);
+    return Number(t.size) || 0;
+  };
+  return usable.sort((a, b) => sizeOf(b) - sizeOf(a))[0] || null;
 }
 
 export function messageToPost(msg, peer, extra = {}) {

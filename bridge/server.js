@@ -12,8 +12,8 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { config, requireConfig, baseUrl } from "./config.js";
-import { resolvePeer, fetchMessages, getMessageById, downloadMediaToCache, downloadAvatarToCache, getMe, disconnect } from "./client.js";
-import { messageToPost, peerInfo } from "./post.js";
+import { resolvePeer, fetchMessages, getMessageById, downloadMediaToCache, downloadAvatarToCache, downloadThumbToCache, getMe, disconnect } from "./client.js";
+import { messageToPost, peerInfo, pickVideoThumb } from "./post.js";
 import { authorized } from "./auth.js";
 
 const MIME = {
@@ -148,6 +148,20 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       const file = await downloadMediaToCache(peer, msg);
+      serveFile(req, res, file);
+      return;
+    }
+
+    if (url.pathname === "/thumb" && req.method === "GET") {
+      requireConfig();
+      const peer = await resolvePeer(url.searchParams.get("ch"));
+      const msg = await getMessageById(peer, url.searchParams.get("m"));
+      const size = pickVideoThumb(msg);
+      if (!msg || !size) {
+        sendJson(res, 404, { error: "thumb_not_found" });
+        return;
+      }
+      const file = await downloadThumbToCache(peer, msg, size);
       serveFile(req, res, file);
       return;
     }

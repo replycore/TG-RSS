@@ -128,13 +128,13 @@ function textOf(html, className) {
 }
 
 function firstAttrInClass(html, className, attrName) {
-  for (const tag of scanTags(html, "a")) {
-    if (!hasClass(tag.attrs, className)) continue;
-    return attrValue(tag.attrs, attrName);
-  }
-  for (const tag of scanTags(html, "div")) {
-    if (!hasClass(tag.attrs, className)) continue;
-    return attrValue(tag.attrs, attrName);
+  // 覆盖 a/div/i/span：t.me 的 video_thumb、document_icon 是 <i>，
+  // author_name 是 <a>——只扫 a/div 会让视频缩略图/文档图标恒为 null（黑屏预览）
+  for (const tagType of ["a", "div", "i", "span"]) {
+    for (const tag of scanTags(html, tagType)) {
+      if (!hasClass(tag.attrs, className)) continue;
+      return attrValue(tag.attrs, attrName);
+    }
   }
   return null;
 }

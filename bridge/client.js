@@ -94,6 +94,28 @@ export async function downloadMediaToCache(peer, msg) {
   return target;
 }
 
+/**
+ * 下载消息缩略图到缓存（<video poster> 用）。
+ * teleproto downloadMedia 内部已处理 PhotoCachedSize（内嵌字节）与
+ * InputDocumentFileLocation(thumbSize) 下载两条路径。
+ */
+export async function downloadThumbToCache(peer, msg, size) {
+  const dir = config.cacheDir;
+  fs.mkdirSync(dir, { recursive: true });
+  const base = `thumb_${peer?.id ?? "x"}_${msg.id}`;
+  const existing = fs.readdirSync(dir).find((f) => f.startsWith(`${base}.`) && !f.endsWith(".part"));
+  if (existing) {
+    const p = path.join(dir, existing);
+    if (fs.statSync(p).size > 0) return p;
+  }
+  const client = await getClient();
+  const buf = await client.downloadMedia(msg, undefined, size);
+  if (!buf || !buf.length) throw new Error("thumb_empty");
+  const file = path.join(dir, `${base}.jpg`);
+  fs.writeFileSync(file, buf);
+  return file;
+}
+
 export async function downloadAvatarToCache(peer) {
   const client = await getClient();
   const dir = config.cacheDir;

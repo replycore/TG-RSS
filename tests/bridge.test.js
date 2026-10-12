@@ -128,3 +128,24 @@ test("peerKeyArg：数字频道 id 带 -100 前缀（防冷启动被判成 PeerU
   assert.equal(peerKeyArg("telegram"), "telegram", "用户名不受影响");
   assert.equal(peerKeyArg({ id: "telegram" }), "telegram");
 });
+
+test("pickVideoThumb：选最大可用缩略图，跳过 Stripped/Path/Empty", async () => {
+  const { pickVideoThumb } = await import("../bridge/post.js");
+  const mk = (className, extra) => ({ className, ...extra });
+  const msg = {
+    media: {
+      document: {
+        thumbs: [
+          mk("PhotoStrippedSize", { bytes: Buffer.alloc(9999) }), // 大但格式不可用 → 跳过
+          mk("PhotoSize", { type: "m", size: 1200 }),
+          mk("PhotoCachedSize", { type: "i", bytes: Buffer.alloc(3000) }),
+          mk("PhotoPathSize", {}),
+        ],
+      },
+    },
+  };
+  const picked = pickVideoThumb(msg);
+  assert.equal(picked.type, "i", "应选 bytes 更大的 PhotoCachedSize");
+  assert.equal(pickVideoThumb({ media: {} }), null, "无 thumbs → null");
+  assert.equal(pickVideoThumb({ media: { document: { thumbs: [mk("PhotoStrippedSize", { bytes: Buffer.alloc(10) })] } } }), null, "只剩 Stripped → null（宁可黑屏不发坏图）");
+});

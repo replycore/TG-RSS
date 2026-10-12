@@ -143,3 +143,30 @@ test("游标解析：data-before", async () => {
   const page2 = `<a href="/s/telegram?before=${nextBefore}" class="tme_messages_more js-messages_more" data-before="${nextBefore}"></a>`;
   assert.equal(__internals ? parseChannelPage(page2).nextBefore : null, nextBefore);
 });
+
+test("视频缩略图：video_thumb 是 <i> 标签时也能提取（修复黑屏预览）", () => {
+  const html = `
+  <div class="tgme_widget_message" data-post="tg/1">
+    <div class="tgme_widget_message_text">vid</div>
+    <a class="tgme_widget_message_video_player" href="https://t.me/tg/1">
+      <i class="tgme_widget_message_video_thumb" style="background-image:url('https://cdn.example.com/preview1.jpg')"></i>
+      <video src="https://cdn.example.com/clip1.mp4" class="tgme_widget_message_video" preload muted playsinline></video>
+    </a>
+  </div>`;
+  const { posts } = parseChannelPage(`<html><body>${html}</body></html>`);
+  const media = (posts[0].media || []).filter((m) => m.type === "video");
+  assert.ok(media.length >= 1, "必须解析出视频");
+  assert.equal(media[0].thumb, "https://cdn.example.com/preview1.jpg", "<i> 标签的 video_thumb 提取（此前只扫 a/div 恒 null → poster 黑屏）");
+});
+
+test("视频缩略图：video 标签带 poster 时作为兜底", () => {
+  const html = `
+  <div class="tgme_widget_message" data-post="tg/2">
+    <a class="tgme_widget_message_video_player" href="https://t.me/tg/2">
+      <video src="https://cdn.example.com/clip2.mp4" poster="https://cdn.example.com/poster2.jpg" preload muted playsinline></video>
+    </a>
+  </div>`;
+  const { posts } = parseChannelPage(`<html><body>${html}</body></html>`);
+  const media = (posts[0].media || []).filter((m) => m.type === "video");
+  assert.equal(media[0]?.thumb, "https://cdn.example.com/poster2.jpg");
+});
