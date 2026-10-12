@@ -1,6 +1,8 @@
 # TG-RSS
 
-部署在 **Cloudflare Workers** 或 **Cloudflare Pages** 上的 Telegram 频道阅读器。
+部署在 **Cloudflare Workers** 或 **Cloudflare Pages** 上的 Telegram 频道阅读器（双兼容，一份代码两种部署形态）。
+
+- **[PAGES.md](./PAGES.md)** — Cloudflare Pages 部署说明（项目创建、KV 绑定、域名绑定含第三方 CNAME、回退 Worker）
 
 - 公开频道：Cloudflare 直接抓取 `t.me/s/<频道>` 预览页，无需任何外部服务
 - 私密频道：配置自己的 Telegram 账号，通过仓库内的 `bridge/` 程序转发到网页
