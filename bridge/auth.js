@@ -67,6 +67,31 @@ export function verifySignature(url, req, token, opts = {}) {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
+/** 任意载荷的 HMAC-SHA256(base64)，token 只作密钥不出现在任何输出里 */
+function hmacB64(token, payload) {
+  return crypto.createHmac("sha256", String(token)).update(payload).digest("base64");
+}
+
+/**
+ * 响应签名（双向校验的反向方向）：TG-RSS 用同一 token 作密钥验证 bridge 确实持有它——
+ * 挡住「伪造的 bridge 返回假数据/假媒体」，也挡住中间人篡改响应。
+ *
+ *   x-bridge-timestamp : Unix 秒
+ *   x-bridge-signature : base64(HMAC-SHA256(token, `${ts}\n${status}\n${method}\n${path}?${query}`))
+ *
+ * 不签 body：媒体走 Range 流式传输，签 body 需整包缓冲（几百 MB）。
+ * 时间窗 + 路径/状态绑定已足够：改内容不改状态码无法得到新签名。
+ */
+export function responseSignatureHeaders({ token, status, method, pathWithQuery }) {
+  if (!token) return {};
+  const ts = String(Math.floor(Date.now() / 1000));
+  const payload = `${ts}\n${status}\n${String(method || "GET").toUpperCase()}\n${pathWithQuery}`;
+  return {
+    "x-bridge-timestamp": ts,
+    "x-bridge-signature": hmacB64(token, payload),
+  };
+}
+
 /** Origin 白名单（仅头认证请求使用）：比较 URL 的 origin（scheme://host[:port]） */
 function originAllowed(req, allowedOrigins) {
   if (!allowedOrigins || !allowedOrigins.length) return true;

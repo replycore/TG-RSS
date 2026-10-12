@@ -114,3 +114,39 @@ test("桥接鉴权：Origin 白名单（可选）只约束头认证，签名不�
     assert.equal(authorized(url, mkReq({ "x-token": token }), token), true);
   });
 });
+
+// 双向校验（反向方向）：bridge 对响应回签，TG-RSS 校验
+test("响应签名：bridge 签 → TG-RSS 验，真实往返", async () => {
+  const { responseSignatureHeaders } = await import("../bridge/auth.js");
+  const { verifyBridgeResponse } = await import("../src/bridge-sign.js");
+  const token = "shared-secret-for-test-123456";
+  const method = "GET";
+  const path = "/feed?channel=-100123&limit=20";
+  const mkRes = (status, headers) => new Response("{}", { status, headers });
+
+  const good = responseSignatureHeaders({ token, status: 200, method, pathWithQuery: path });
+  const r1 = await verifyBridgeResponse({ token }, mkRes(200, good), method, path);
+  assert.equal(r1.ok, true, "合法签名应通过");
+
+  const r2 = await verifyBridgeResponse({ token: "wrong-token" }, mkRes(200, good), method, path);
+  assert.equal(r2.ok, false, "错误 token 应拒绝");
+  assert.equal(r2.reason, "bad_signature");
+
+  const r3 = await verifyBridgeResponse({ token }, mkRes(200, good), method, "/feed?channel=-100999&limit=20");
+  assert.equal(r3.ok, false, "路径不匹配应拒绝（防跨路径重放）");
+
+  const r4 = await verifyBridgeResponse({ token }, mkRes(200, good), "GET", path);
+  assert.equal(r4.ok, true);
+
+  const r5 = await verifyBridgeResponse({ token }, mkRes(206, good), method, path);
+  assert.equal(r5.ok, false, "状态码被改应拒绝");
+
+  const r6 = await verifyBridgeResponse({ token }, mkRes(200, {}), method, path);
+  assert.equal(r6.ok, false, "未签名应拒绝");
+  assert.equal(r6.reason, "unsigned");
+
+  const stale = { "x-bridge-timestamp": String(Math.floor(Date.now() / 1000) - 9999), "x-bridge-signature": good["x-bridge-signature"] };
+  const r7 = await verifyBridgeResponse({ token }, mkRes(200, stale), method, path);
+  assert.equal(r7.ok, false, "过窗应拒绝");
+  assert.equal(r7.reason, "stale");
+});

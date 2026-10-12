@@ -18,7 +18,7 @@ import path from "node:path";
 import { config, requireConfig, baseUrl } from "./config.js";
 import { resolvePeer, fetchMessages, getMessageById, downloadMediaToCache, downloadAvatarToCache, downloadThumbToCache, getMe, disconnect } from "./client.js";
 import { messageToPost, peerInfo, pickVideoThumb } from "./post.js";
-import { authorized } from "./auth.js";
+import { authorized, responseSignatureHeaders } from "./auth.js";
 
 const MIME = {
   jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", gif: "image/gif", webp: "image/webp", bmp: "image/bmp",
@@ -37,9 +37,24 @@ function mimeOf(file) {
 /* 鉴权统一在 ./auth.js：HMAC 签名（x-timestamp + x-signature）为主，
    也兼容 x-token 头 / Authorization: Bearer；?token= 查询参数已移除（token 不进 URL/HTML） */
 
+/**
+ * 统一出口：所有响应都带 bridge 响应签名（x-bridge-timestamp/-signature），
+ * 供 TG-RSS 校验 bridge 身份（双向校验的反向方向）。桥接地址通常在公网，
+ * 缺这一步的话伪造的 bridge 能返回任意帖子/媒体。
+ */
+function signedHeaders(req, url, status) {
+  return responseSignatureHeaders({
+    token: config.token,
+    status,
+    method: req.method,
+    pathWithQuery: url.pathname + url.search,
+  });
+}
+
 function sendJson(res, status, data) {
   const body = JSON.stringify(data);
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  const extra = res.__signedHeaders ? res.__signedHeaders(status) : {};
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...extra });
   res.end(body);
 }
 
@@ -66,7 +81,7 @@ function serveFile(req, res, file) {
       let end = m[2] === "" ? stat.size - 1 : Number(m[2]);
       if (m[1] === "") end = stat.size - 1;
       if (Number.isNaN(start) || Number.isNaN(end) || start > end || start >= stat.size) {
-        res.writeHead(416, { "content-range": `bytes */${stat.size}` });
+        res.writeHead(416, { "content-range": `bytes */${stat.size}`, ...sig(res, 416) });
         res.end();
         return;
       }
@@ -84,7 +99,7 @@ function serveFile(req, res, file) {
     }
   }
 
-  res.writeHead(200, { ...baseHeaders, "content-length": stat.size });
+  res.writeHead(200, { ...baseHeaders, "content-length": stat.size, ...sig(res, 200) });
   const stream = fs.createReadStream(file);
   stream.on("error", () => res.destroy());
   res.on("close", () => stream.destroy());
@@ -112,6 +127,9 @@ async function handleFeed(url) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  // 双向校验：所有响应（200/401/404 全覆盖）都带 bridge 签名头，
+  // TG-RSS 侧据此确认对端确实持有 token。必须在鉴权前挂，否则 401 类响应漏签。
+  res.__signedHeaders = (status) => signedHeaders(req, url, status);
   try {
     if (req.method === "OPTIONS") {
       res.writeHead(204, { "access-control-allow-origin": "*", "access-control-allow-headers": "x-timestamp, x-signature", "access-control-allow-methods": "GET,OPTIONS" });

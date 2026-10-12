@@ -6,7 +6,7 @@
 import { HttpError, absoluteUrl, b64urlEncode } from "../util.js";
 import { parseChannelPage } from "./parser.js";
 import { getBridgeSettings, getChannelMeta, putChannelMeta } from "../store.js";
-import { bridgeSignedHeaders } from "../bridge-sign.js";
+import { bridgeSignedHeaders, verifyBridgeResponse } from "../bridge-sign.js";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -176,6 +176,12 @@ export async function fetchBridgeFeed(env, channel, before = null, limit = 20) {
   }
   if (res.status === 404) throw new HttpError(404, "桥接服务找不到该频道", "channel_not_found");
   if (!res.ok) throw new HttpError(502, `桥接服务返回 ${res.status}`, "bridge_error");
+
+  // 双向校验（反向）：确认对端确实持有 token —— 挡住伪造的 bridge 返回假数据
+  const verified = await verifyBridgeResponse(bridge, res, "GET", url.pathname + url.search);
+  if (!verified.ok) {
+    throw new HttpError(502, `桥接服务响应未通过签名校验（${verified.reason}）：请更新 bridge 到最新版并确认两端 token 一致`, "bridge_unverified");
+  }
 
   const data = await res.json();
   const posts = (Array.isArray(data.posts) ? data.posts : []).map((p) => normalizeBridgePost(p, channel));

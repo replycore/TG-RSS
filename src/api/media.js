@@ -10,7 +10,7 @@ import {
   getClientIp,
 } from "../util.js";
 import { getGeneral, getMediaSettings, getChannels } from "../store.js";
-import { bridgeSignedHeaders } from "../bridge-sign.js";
+import { bridgeSignedHeaders, verifyBridgeResponse } from "../bridge-sign.js";
 import { loadChannelPage, visibleChannels, findChannel, assertVisible } from "./content.js";
 import { resolveBridge, fetchPublicChannelPage } from "../tg/fetcher.js";
 import { parseSingleMessage } from "../tg/parser.js";
@@ -383,6 +383,15 @@ export async function proxyMedia(request, env, ctx, url) {
     const next = assertRedirectAllowed(loc, currentUrl, bridge);
     if (res.body && typeof res.body.cancel === "function") await res.body.cancel().catch(() => {});
     currentUrl = next.toString();
+  }
+
+  // 双向校验（反向）：bridge 媒体必须带合法响应签名 —— 挡住伪造的 bridge 返回假文件
+  if (isBridge && bridge.token && res.ok) {
+    const verified = await verifyBridgeResponse(bridge, res, "GET", new URL(currentUrl).pathname + new URL(currentUrl).search);
+    if (!verified.ok) {
+      if (res.body && typeof res.body.cancel === "function") await res.body.cancel().catch(() => {});
+      throw new HttpError(502, `桥接媒体未通过签名校验（${verified.reason}）：请更新 bridge 到最新版并确认两端 token 一致`, "bridge_unverified");
+    }
   }
 
   if (!res.ok && res.status !== 206) {
