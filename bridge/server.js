@@ -129,7 +129,7 @@ const server = http.createServer(async (req, res) => {
       if (tsRaw) {
         console.warn(`拒绝 ${req.method} ${url.pathname}：签名无效（服务端时间 ${serverTime}，签名时间 ${tsRaw}，差 ${drift}s，窗 ${config.signWindowSec}s）`);
       }
-      sendJson(res, 401, { error: "invalid_token", serverTime });
+      sendJson(res, 401, { error: "invalid_token", serverTime, windowSec: config.signWindowSec });
       return;
     }
 

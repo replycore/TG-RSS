@@ -159,13 +159,17 @@ export async function fetchBridgeFeed(env, channel, before = null, limit = 20) {
   }
 
   if (res.status === 401 || res.status === 403) {
-    // 时钟差提示：bridge 401 响应带 serverTime，偏差超窗时最常见的原因是桥接机器时钟不对
+    // 时钟差提示：bridge 401 响应带 serverTime + 它自己的时间窗 windowSec（可配 60~3600），
+    // 按其窗口判定——超出才提示 NTP，避免阈值写死与配置对不上
     let hint = "";
     try {
       const body = await res.json();
       if (body && Number.isFinite(Number(body.serverTime))) {
+        const windowSec = Number(body.windowSec) > 0 ? Number(body.windowSec) : 300;
         const drift = Number(body.serverTime) - Math.floor(Date.now() / 1000);
-        if (Math.abs(drift) > 300) hint = `（bridge 时钟差约 ${drift}s，检查桥接机器 NTP）`;
+        if (Math.abs(drift) > windowSec) {
+          hint = `（bridge 时钟差约 ${drift}s，超出其签名时间窗 ±${windowSec}s，检查桥接机器 NTP）`;
+        }
       }
     } catch { /* 响应体非 JSON 则忽略 */ }
     throw new HttpError(502, `桥接服务拒绝访问${hint}`, "bridge_denied");

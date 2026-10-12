@@ -81,3 +81,52 @@ test("proxyAll=false：bridge 媒体仍恒走代理（裸 URL 无认证必 401�
   );
   assert.equal(pub.media[0].src, "https://cdn.example.com/a.jpg");
 });
+
+test("fetchBridgeFeed 401：按 bridge 自报的 windowSec 判定时钟差，写死 300s 的场景不再漏提示", async () => {
+  const { fetchBridgeFeed } = await import("../src/tg/fetcher.js");
+  const { HttpError } = await import("../src/util.js");
+  const now = Math.floor(Date.now() / 1000);
+  const env = {
+    TG_RSS_KV: {
+      get: async (k, type) => {
+        if (k !== "settings:bridge") return null;
+        const raw = JSON.stringify({ url: "https://b.example.com", token: "t", enabled: true });
+        return type === "json" ? JSON.parse(raw) : raw;
+      },
+      put: async () => {},
+    },
+  };
+  const realFetch = globalThis.fetch;
+  const mock401 = async (serverTime, windowSec) => ({
+    ok: false,
+    status: 401,
+    headers: { get: () => "application/json" },
+    json: async () => ({ error: "invalid_token", serverTime, windowSec }),
+    text: async () => "",
+  });
+  try {
+    // 场景：窗口配 60s、时钟差 100s —— 超窗被拒（drift < 300，旧写死阈值不会提示）
+    globalThis.fetch = async () => mock401(now - 100, 60);
+    await assert.rejects(
+      () => fetchBridgeFeed(env, { username: "u", key: "u" }),
+      (err) => err instanceof HttpError && /时钟差约 -?100s/.test(err.message) && /±60s/.test(err.message) && /NTP/.test(err.message),
+      "超窗时钟差必须提示 NTP",
+    );
+    // 窗口 60s、时钟差 50s：未超窗（401 另有原因）→ 不提示 NTP
+    globalThis.fetch = async () => mock401(now - 50, 60);
+    await assert.rejects(
+      () => fetchBridgeFeed(env, { username: "u", key: "u" }),
+      (err) => !/NTP/.test(err.message),
+      "未超窗不得误报 NTP",
+    );
+    // 响应体无 windowSec（旧 bridge）→ 回退 300s
+    globalThis.fetch = async () => mock401(now - 400, undefined);
+    await assert.rejects(
+      () => fetchBridgeFeed(env, { username: "u", key: "u" }),
+      (err) => /NTP/.test(err.message),
+      "无 windowSec 时按 300s 兜底",
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
