@@ -49,7 +49,7 @@ async function cachedFetch(upstream, ttl, ctx) {
         // 命中后自校验 age：边缘可能返回已过期条目，按 ttl 重新回源
         const storedAt = Number(hit.headers.get(CACHED_AT));
         const ageSec = storedAt > 0 ? (Date.now() - storedAt) / 1000 : 0;
-        if (Number.isFinite(storedAt) && storedAt > 0 && ageSec <= ttl) return hit;
+        if (Number.isFinite(storedAt) && storedAt > 0 && ageSec <= ttl) return withUpMarker(hit, "HIT");
         // 过期 → 删除并回源
         try { await cache.delete(cacheKey); } catch { /* ignore */ }
       }
@@ -87,7 +87,23 @@ async function cachedFetch(upstream, ttl, ctx) {
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(done);
     else await done;
   }
-  return res;
+  // 出口打标：有缓存层且未命中 = MISS；ttl=0 或缓存不可用 = BYPASS
+  return withUpMarker(res, cache && ttl > 0 ? "MISS" : "BYPASS");
+}
+
+/* N-2 可观测性：给 cachedFetch 的返回打上游缓存状态标（HIT/MISS/BYPASS），
+   由 fetchPublicChannelPage → loadChannelPage → getChannelPosts 透传成响应字段 _up，
+   用于在真实 Workers 上验证缓存命中（dev-server 模拟层测不出 CF Cache API 语义）。 */
+function withUpMarker(res, value) {
+  try {
+    // 兼容测试里非 Response 形态的 mock（无 body/clone）：跳过打标，原样返回
+    if (!res || res.body === undefined || typeof res.clone !== "function") return res;
+    const out = new Response(res.body, res);
+    out.headers.set("x-tgrss-up", value);
+    return out;
+  } catch {
+    return res;
+  }
 }
 
 /* ------------------------------------------------------------- 公开频道抓取 */
@@ -106,6 +122,7 @@ export async function fetchPublicChannelPage(env, ctx, username, before = null, 
 
   const html = await res.text();
   const parsed = parseChannelPage(html);
+  parsed.cacheStatus = (res.headers && res.headers.get ? res.headers.get("x-tgrss-up") : null) || null; // N-2 调试标透传
 
   if (parsed.posts.length === 0) {
     // t.me 对不存在的频道会 302 首页，这里统一按 404 处理

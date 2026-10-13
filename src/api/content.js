@@ -122,7 +122,7 @@ export async function loadChannelPage(env, ctx, channel, before = null, limit = 
     .map((p) => ({ ...p, tags: p.tags?.length ? p.tags : extractTags(p.textPlain || p.text || "") }))
     // 广告帖识别（内置 AD_TAGS + 后台自定义 adTagsExtra）→ 单页出口即过滤，信息流/频道页/RSS 全局隐藏
     .filter((p) => !isAdPost(p, adTagsExtra));
-  return { info, posts, next: parsed.nextBefore ?? null };
+  return { info, posts, next: parsed.nextBefore ?? null, cacheStatus: parsed.cacheStatus || null };
 }
 
 /** 帖子是否携带媒体（图片/视频/音频/文件任一） */
@@ -147,12 +147,14 @@ export async function loadFilledChannelPage(env, ctx, channel, before = null, li
   let info = null;
   const collected = [];
   const seen = new Set();
+  const statuses = new Set(); // N-2 调试标：各页上游缓存状态
   for (let page = 0; page < PAGE_FILL_MAX_PAGES; page += 1) {
     // L-1：总抓取预算——多个频道并发补页时，用共享 budget 收敛 t.me 请求总量，
     // 防「多频道 × 每频道多页」叠加超出单次 CPU/子请求预算。
     if (budget && budget.remaining <= 0) break;
     if (budget) budget.remaining -= 1;
     const result = await loadChannelPage(env, ctx, channel, cursor, limit);
+    if (result.cacheStatus) statuses.add(result.cacheStatus);
     info = info || result.info;
     next = result.next;
     for (const post of result.posts) {
@@ -165,7 +167,12 @@ export async function loadFilledChannelPage(env, ctx, channel, before = null, li
     if (collected.length >= limit || !result.next) break;
     cursor = result.next;
   }
-  return { info, posts: collected, next };
+  // N-2 调试标聚合：任一页未命中即 MISS；全 BYPASS 即 BYPASS；全命中即 HIT
+  const cacheStatus = statuses.size === 0 ? null
+    : statuses.has("MISS") ? "MISS"
+    : statuses.has("BYPASS") ? "BYPASS"
+    : "HIT";
+  return { info, posts: collected, next, cacheStatus };
 }
 
 /** 兼容旧调用：等价于 loadFilledChannelPage，强制只投媒体帖 */
@@ -209,13 +216,14 @@ export async function getChannelPosts(request, env, ctx, url, key, authenticated
   const before = url.searchParams.get("before") || null;
 
   // 统一走补页循环：仅媒体频道只投媒体帖；广告帖任何频道都不投（loadChannelPage 已过滤）
-  const { info, posts: allPosts, next } = await loadFilledChannelPage(env, ctx, channel, before, limit);
+  const { info, posts: allPosts, next, cacheStatus } = await loadFilledChannelPage(env, ctx, channel, before, limit);
   // 与信息流一致的 #标签 过滤
   const tag = String(url.searchParams.get("tag") || "").replace(/^#/, "").trim().toLowerCase();
   const posts = tag
     ? allPosts.filter((p) => (p.tags || []).some((t) => String(t).toLowerCase() === tag))
     : allPosts;
-  return { channel: info, posts, next, count: posts.length };
+  // _up：上游页面缓存状态（HIT/MISS/BYPASS），供真实 Workers 上验证 N-2 缓存命中
+  return { channel: info, posts, next, count: posts.length, _up: cacheStatus || null };
 }
 
 /* --------------------------------------------------------------- GET /api/feed */
