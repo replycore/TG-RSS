@@ -70,7 +70,7 @@
 | --- | --- | --- |
 | `type` | `public` / `private` | 公开走 `t.me/s/`，私密走桥接 |
 | `username` | `^[A-Za-z0-9_]{4,64}$` | 公开频道用户名（不带 @） |
-| `tgId` | `^-?\d{5,25}$` | 私密频道数字 ID，如 `-1001234567890` |
+| `tgId` | `^-\d{5,25}$`（减号**必须**有，正数非法） | 私密频道数字 ID，如 `-1001234567890` |
 | `name` | ≤80 字符 | 显示名称 |
 | `order` | 整数 | 排序，越小越靠前 |
 | `hidden` | true / false | true = 未登录不可见 |
@@ -115,7 +115,7 @@ cd bridge && cp .env.example .env   # 改完
 npm install
 npm run login                       # 首次登录
 npm start                           # 启动
-curl http://127.0.0.1:8788/health   # 应返回 ok
+curl http://127.0.0.1:8788/health   # 应返回 {"ok":true,"service":"tg-rss-bridge",...}
 ```
 
 ## 6. 配置存储位置（KV Key）
@@ -130,7 +130,7 @@ curl http://127.0.0.1:8788/health   # 应返回 ok
 | `auth:sess:<token>` | 会话（7 天） |
 | `auth:limit:<ip>` | 登录限流计数（5 分钟） |
 | `channel:meta:<key>` | 频道头像/简介 |
-| `channel:sync:<key>` | 同步游标 |
+| `channel:sync:<key>` | 同步游标（预留未用，无任何读写） |
 
 ```bash
 npx wrangler kv key list --namespace-id <id>          # 列出

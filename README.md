@@ -58,7 +58,7 @@
              └─ 其余路径 ──▶ 静态资源 public/（SPA）
 
 bridge/（跑在你的 VPS / 家里 / 内网穿透）
-  Telethon 类账号会话 ──▶ Telegram MTProto ──▶ 私密频道消息与媒体
+  teleproto（GramJS 分支）账号会话 ──▶ Telegram MTProto ──▶ 私密频道消息与媒体
 ```
 
 同一份 `src/index.js` 同时被两种部署方式复用：
@@ -90,7 +90,7 @@ bridge/（跑在你的 VPS / 家里 / 内网穿透）
 ├─ bridge/                  # 私密频道桥接（Node ≥20）
 │  ├─ server.js login.js client.js post.js config.js
 │  ├─ .env.example
-├─ tests/                   # node --test 单测（41 项，含 tests/styles.test.js 主题回归）
+├─ tests/                   # node --test 单测（137 项）
 ├─ tools/                   # dev-server.mjs 本地服务 / palette-check.mjs 对比度审计
 │                            # contrast.mjs 逐元素审计 / screenshot.mjs 截图（后两个需 Chrome）
 ├─ wrangler.jsonc           # Workers 配置
@@ -101,7 +101,7 @@ bridge/（跑在你的 VPS / 家里 / 内网穿透）
 
 ```bash
 npm install          # 安装 wrangler 等依赖
-npm test             # 运行单测（41 项）
+npm test             # 运行单测（137 项）
 npm run dev          # http://localhost:8787（wrangler dev，需要 workerd）
 npm run dev:node     # 同端口，纯 Node 启动（tools/dev-server.mjs），不需要 workerd
 ```
@@ -250,7 +250,8 @@ npm start                   # 启动，监听 8788
 监听地址默认只绑 `127.0.0.1`；要让局域网访问需显式 `BRIDGE_HOST=0.0.0.0`。
 
 > ⚠️ **升级顺序：先升 bridge，再升 TG-RSS（Worker/Pages）。** 两版**双向不兼容**，无配置可绕：
-> - 先升 bridge、TG-RSS 还在 v1.2.3 及更早 → 旧版靠 `?token=` 查询参数，而新版 bridge 已移除该支持 → 私密频道立即 401；
+> - 先升 bridge、TG-RSS 还在 v1.2.3 及更早 → 旧版用 `x-token` 头调用 API（正常），
+>   但旧版浏览器直链 `?token=`（头像、`proxyAll=false` 直链）已被新版 bridge 移除支持 → 头像与直链媒体 401；
 > - 先升 TG-RSS、bridge 还是旧版 → 新版只发签名头（`x-timestamp` + `x-signature`），不再回退 `x-token`（见 `src/bridge-sign.js`）→ 旧 bridge 不认签名 → 同样 401。
 >
 > bridge 侧的鉴权顺序固定为「先验签名 → 再验 `Bearer`/`x-token` 头」，**没有开关**；
@@ -275,7 +276,7 @@ cloudflared tunnel --url http://127.0.0.1:8788
 
 `管理 → 私密频道桥接`：填地址 + 令牌 + 勾选启用 → 保存 → **连通性测试**。
 
-桥接接口（全部需要 `x-token`，`/health` 除外）：
+桥接接口（`/health` 免鉴权，其余均需 HMAC 签名头；`x-token`/`Bearer` 仅兼容旧版调用与调试）：
 
 | 路径 | 说明 |
 | --- | --- |
@@ -300,7 +301,7 @@ cloudflared tunnel --url http://127.0.0.1:8788
 | `auth:sess:<token>` | 会话记录，TTL 7 天 |
 | `auth:limit:<ip>` | 登录失败计数，5 分钟窗口，超过 8 次 429 |
 | `channel:meta:<key>` | 频道头像 / 简介 / 计数（10 分钟节流回写） |
-| `channel:sync:<key>` | 同步游标 |
+| `channel:sync:<key>` | 同步游标（预留未用，无任何读写） |
 
 抓取到的页面正文走 **Cache API**（`caches.default`），不占 KV 写配额。
 
@@ -343,7 +344,7 @@ GET  /api/rss?channel=<key>      # 单个频道
 ## 12. 测试
 
 ```bash
-npm test        # node --test，41 项（解析器 / 清洗 / 存储 / 鉴权 / 桥接归一化 / 样式回归 / 前端集成）
+npm test        # node --test，137 项（解析器 / 清洗 / 存储 / 鉴权 / 桥接归一化 / 样式回归 / 前端集成 / 桥接签名往返）
 ```
 
 解析器测试使用 `tests/fixtures/` 中真实抓取的 t.me 页面快照。
