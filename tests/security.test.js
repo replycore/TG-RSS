@@ -9,8 +9,10 @@ import { parseCookies } from "../src/util.js";
 import { verifyTurnstile, turnstileSiteKey } from "../src/turnstile.js";
 import { assertRedirectAllowed, checkProxyContentType, proxyRateConsume } from "../src/api/media.js";
 import { consumeRateLimit, resetRateLimit } from "../src/store.js";
+import { isolatedBase } from "./helpers/dev-server.js";
 
-const BASE = process.env.TEST_BASE || "http://localhost:8787";
+// N-6：默认拉起本文件专属 dev-server（随机端口、独立内存 KV），避免与其他测试共享状态
+const BASE = (await isolatedBase()) || "http://localhost:8787";
 
 function mkReq(headers = {}) {
   const map = {};
@@ -39,7 +41,7 @@ function mockEnv() {
 
 async function serverUp() {
   try {
-    const res = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(8000) });
     return res.ok;
   } catch {
     return false;
@@ -176,7 +178,7 @@ test("登录限流：预扣计数，第 9 次 429，reset 后恢复", async () =
 
 test("GET /api/admin/state 不泄露用户名", async (t) => {
   if (!(await serverUp())) { t.skip("开发服务器未启动"); return; }
-  const res = await fetch(`${BASE}/api/admin/state`, { signal: AbortSignal.timeout(10000) });
+  const res = await fetch(`${BASE}/api/admin/state`, { signal: AbortSignal.timeout(30000) });
   assert.equal(res.status, 200);
   const data = await res.json();
   assert.equal(data.username, null, "未登录时 username 必须为 null");
@@ -189,7 +191,7 @@ test("GET /api/admin/state 不泄露用户名", async (t) => {
 
 test("GET /api/config 带 turnstileSiteKey 字段", async (t) => {
   if (!(await serverUp())) { t.skip("开发服务器未启动"); return; }
-  const res = await fetch(`${BASE}/api/config`, { signal: AbortSignal.timeout(10000) });
+  const res = await fetch(`${BASE}/api/config`, { signal: AbortSignal.timeout(30000) });
   assert.equal(res.status, 200);
   const data = await res.json();
   assert.ok("turnstileSiteKey" in data, "配置接口必须带 sitekey 字段");
@@ -205,7 +207,7 @@ test("登录口限流：9 次快速失败后 429（独立 IP 头）", async (t) 
       method: "POST",
       headers: { "content-type": "application/json", "cf-connecting-ip": ip },
       body: JSON.stringify({ username: "nobody", password: "wrong-password" }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(30000),
     });
     if (res.status === 429) {
       got429 = true;

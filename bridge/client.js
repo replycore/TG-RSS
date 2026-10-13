@@ -51,7 +51,9 @@ export async function resolvePeer(value) {
 export async function fetchMessages(peer, { before = null, limit = 20 } = {}) {
   const client = await getClient();
   const rawLimit = Number(limit);
-  const options = { limit: Number.isFinite(rawLimit) ? Math.max(1, Math.min(50, rawLimit)) : 20 };
+  // N-3：上界 51（Telegram 单次上限 50 + handleFeed 判 next 多取的 1 条）。
+  // 原来 clamp 到 50 时，limit=50 的请求拿到恰好 50 条，`fetched.length > limit` 永假 → next 恒 null。
+  const options = { limit: Number.isFinite(rawLimit) ? Math.max(1, Math.min(51, rawLimit)) : 20 };
   if (before && /^\d+$/.test(String(before))) options.offsetId = Number(before);
 
   const out = [];

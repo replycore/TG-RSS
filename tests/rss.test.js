@@ -5,8 +5,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { renderRss, itemTitle } from "../src/api/rss.js";
+import { isolatedBase } from "./helpers/dev-server.js";
 
-const BASE = process.env.TG_RSS_BASE || "http://localhost:8787";
+// N-6：默认拉起本文件专属 dev-server（随机端口、独立内存 KV），避免与其他测试共享状态
+const BASE = (await isolatedBase()) || "http://localhost:8787";
 
 function samplePosts() {
   return [

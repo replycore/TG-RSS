@@ -12,8 +12,11 @@ import { visibleChannels, assertVisible } from "../src/api/content.js";
 import { extractRssToken, checkRssToken, rotateRssToken, revokeRssToken } from "../src/rss-auth.js";
 import { mapRssError } from "../src/api/rss.js";
 import { HttpError } from "../src/util.js";
+import { isolatedBase } from "./helpers/dev-server.js";
 
-const BASE = process.env.TEST_BASE || "http://localhost:8787";
+// N-6：默认拉起本文件专属 dev-server（随机端口、独立内存 KV）——
+// 本文件会 setup 管理员、改设置、轮换 RSS token，共享实例会污染其他测试文件。
+const BASE = (await isolatedBase()) || "http://localhost:8787";
 
 function mockEnv() {
   const store = new Map();
@@ -42,7 +45,7 @@ function mkReq(headers = {}) {
 
 async function serverUp() {
   try {
-    const res = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(8000) });
     return res.ok;
   } catch {
     return false;
@@ -56,14 +59,14 @@ async function adminSession() {
     method: "POST",
     headers: { "content-type": "application/json", ...ip },
     body: JSON.stringify({ username: "rssadmin", password: "rss-token-test-pw" }),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(30000),
   });
   if (res.status === 409) {
     res = await fetch(`${BASE}/api/admin/login`, {
       method: "POST",
       headers: { "content-type": "application/json", ...ip },
       body: JSON.stringify({ username: "rssadmin", password: "rss-token-test-pw" }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(30000),
     });
   }
   assert.equal(res.status, 200, "应能拿到管理会话");
@@ -186,19 +189,19 @@ test("RSS 令牌集成：401/200、private 缓存、self 不带令牌、吊销",
   const auth = { cookie, "cf-connecting-ip": "198.51.100.88" };
 
   // 1) 未登录拿令牌状态 → 401
-  const anon = await fetch(`${BASE}/api/admin/rss-token`, { signal: AbortSignal.timeout(10000) });
+  const anon = await fetch(`${BASE}/api/admin/rss-token`, { signal: AbortSignal.timeout(30000) });
   assert.equal(anon.status, 401);
 
   // 2) 初始状态（KV 跨次保留，先清理可能存在的令牌）
-  let st = await (await fetch(`${BASE}/api/admin/rss-token`, { headers: auth, signal: AbortSignal.timeout(10000) })).json();
+  let st = await (await fetch(`${BASE}/api/admin/rss-token`, { headers: auth, signal: AbortSignal.timeout(30000) })).json();
   if (st.enabled) {
     await fetch(`${BASE}/api/admin/rss-token`, {
       method: "POST",
       headers: { ...auth, "content-type": "application/json" },
       body: JSON.stringify({ action: "revoke" }),
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(30000),
     });
-    st = await (await fetch(`${BASE}/api/admin/rss-token`, { headers: auth, signal: AbortSignal.timeout(10000) })).json();
+    st = await (await fetch(`${BASE}/api/admin/rss-token`, { headers: auth, signal: AbortSignal.timeout(30000) })).json();
   }
   assert.equal(st.enabled, false);
 
@@ -207,7 +210,7 @@ test("RSS 令牌集成：401/200、private 缓存、self 不带令牌、吊销",
     method: "POST",
     headers: { ...auth, "content-type": "application/json" },
     body: JSON.stringify({ action: "rotate" }),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(30000),
   })).json();
   assert.equal(rotated.enabled, true);
   assert.ok(rotated.token && rotated.url.includes(rotated.token));
@@ -249,7 +252,7 @@ test("RSS 令牌集成：401/200、private 缓存、self 不带令牌、吊销",
     method: "POST",
     headers: { ...auth, "content-type": "application/json" },
     body: JSON.stringify({ action: "revoke" }),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(30000),
   });
   assert.equal(rev.status, 200);
   const afterRevoke = await fetch(`${BASE}/rss.xml?token=${encodeURIComponent(token)}`, { signal: AbortSignal.timeout(30000) });
@@ -266,7 +269,7 @@ test("私密频道集成：列表隐藏、无令牌 401、带令牌过授权（�
     method: "POST",
     headers: { ...auth, "content-type": "application/json" },
     body: JSON.stringify({ channels: [{ type: "private", tgId: "-1001234567890", name: "SecretFeed" }] }),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(30000),
   });
   assert.equal(save.status, 200, "保存私密频道应成功");
   const saved = await save.json();
@@ -275,7 +278,7 @@ test("私密频道集成：列表隐藏、无令牌 401、带令牌过授权（�
   assert.equal(priv.hidden, true, "保存时强制 hidden");
 
   // 未登录：列表里看不到
-  const list = await (await fetch(`${BASE}/api/channels`, { signal: AbortSignal.timeout(10000) })).json();
+  const list = await (await fetch(`${BASE}/api/channels`, { signal: AbortSignal.timeout(30000) })).json();
   assert.ok(!(list.channels || []).some((c) => c.key === priv.key), "匿名列表不得出现私密频道");
 
   // 无令牌：单频道源 → 401（需要凭据），且带 WWW-Authenticate
@@ -289,7 +292,7 @@ test("私密频道集成：列表隐藏、无令牌 401、带令牌过授权（�
     method: "POST",
     headers: { ...auth, "content-type": "application/json" },
     body: JSON.stringify({ action: "rotate" }),
-    signal: AbortSignal.timeout(10000),
+    signal: AbortSignal.timeout(30000),
   })).json();
   const withTok = await fetch(
     `${BASE}/api/rss?channel=${encodeURIComponent(priv.key)}&token=${encodeURIComponent(rotated.token)}`,

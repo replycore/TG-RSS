@@ -8,8 +8,10 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { Window } from "happy-dom";
+import { isolatedBase } from "./helpers/dev-server.js";
 
-const BASE = process.env.TG_RSS_BASE || "http://localhost:8787";
+// N-6：默认拉起本文件专属 dev-server（随机端口、独立内存 KV），避免与其他测试共享状态
+const BASE = (await isolatedBase()) || process.env.TG_RSS_BASE || "http://localhost:8787";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const realFetch = globalThis.fetch;
 

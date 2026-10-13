@@ -21,7 +21,7 @@ import http from "node:http";
 import { readFile } from "node:fs/promises";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(dir, "..", "public");
@@ -141,33 +141,62 @@ globalThis.fetch = async (input, init) => {
 globalThis.caches = { default: createCache() };
 
 const { default: worker } = await import(path.join(dir, "..", "src", "index.js"));
-const env = {
-  TG_RSS_KV: createKV(),
-  ASSETS: { fetch: assetsFetch },
-  DEBUG: process.env.DEBUG || "",
-};
-const ctx = { waitUntil: (p) => Promise.resolve(p).catch(() => {}) };
 
-const server = http.createServer(async (req, res) => {
-  try {
-    const host = req.headers.host || `localhost:${PORT}`;
-    const request = new Request(`http://${host}${req.url}`, {
-      method: req.method,
-      headers: req.headers,
-      body: ["GET", "HEAD"].includes(req.method) ? undefined : req,
-      duplex: "half",
-    });
-    const response = await worker.fetch(request, env, ctx);
-    const out = {};
-    response.headers.forEach((v, k) => { out[k] = v; });
-    res.writeHead(response.status, out);
-    res.end(Buffer.from(await response.arrayBuffer()));
-  } catch (err) {
-    res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
-    res.end(`dev-server error: ${err && err.stack ? err.stack : err}`);
-  }
-});
+/**
+ * 启动一台 dev-server（供测试进程内直启，N-6 隔离用）。
+ * @param {object} [opts]
+ * @param {number} [opts.port]  0 = OS 随机端口
+ * @param {boolean} [opts.keepAlive] true（CLI 默认）= 保持事件循环存活；false（测试用）= unref
+ * @returns {Promise<{url: string, port: number, server: import("node:http").Server, env: object, close: () => Promise<void>}>}
+ */
+export async function startDevServer({ port = 0, keepAlive = true } = {}) {
+  const env = {
+    TG_RSS_KV: createKV(),
+    ASSETS: { fetch: assetsFetch },
+    DEBUG: process.env.DEBUG || "",
+  };
+  const ctx = { waitUntil: (p) => Promise.resolve(p).catch(() => {}) };
 
-server.listen(PORT, () => {
-  console.log(`[dev-server] http://localhost:${PORT}  (无 workerd，直接跑 src/index.js)`);
-});
+  const server = http.createServer(async (req, res) => {
+    try {
+      const host = req.headers.host || `localhost:${port}`;
+      const request = new Request(`http://${host}${req.url}`, {
+        method: req.method,
+        headers: req.headers,
+        body: ["GET", "HEAD"].includes(req.method) ? undefined : req,
+        duplex: "half",
+      });
+      const response = await worker.fetch(request, env, ctx);
+      const out = {};
+      response.headers.forEach((v, k) => { out[k] = v; });
+      res.writeHead(response.status, out);
+      res.end(Buffer.from(await response.arrayBuffer()));
+    } catch (err) {
+      res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+      res.end(`dev-server error: ${err && err.stack ? err.stack : err}`);
+    }
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    // N-6：port=0 时由 OS 分配随机端口——测试进程内直启专属实例，避免共享内存状态
+    server.listen(port, resolve);
+  });
+  if (!keepAlive) server.unref(); // 测试用：不让监听句柄拖住事件循环退出
+
+  const actual = server.address().port;
+  return {
+    url: `http://localhost:${actual}`,
+    port: actual,
+    server,
+    env,
+    close: () => new Promise((resolve) => server.close(() => resolve())),
+  };
+}
+
+/* CLI 入口：直接运行时才自动启动（被 import 时只导出函数） */
+const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  const started = await startDevServer({ port: PORT, keepAlive: true });
+  console.log(`[dev-server] ${started.url}  (无 workerd，直接跑 src/index.js)`);
+}

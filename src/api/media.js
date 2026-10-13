@@ -20,7 +20,6 @@ export const MEDIA_TYPES = ["video", "image", "audio", "file"];
 const MAX_MEDIA_CHANNELS = 6;
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-const EDGE_CACHE_TTL = 6 * 3600;
 const MAX_EDGE_CACHE_BYTES = 8 * 1024 * 1024;
 
 function getCache() {

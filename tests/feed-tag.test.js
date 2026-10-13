@@ -1,11 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { isolatedBase } from "./helpers/dev-server.js";
 
-const BASE = process.env.TG_RSS_BASE || "http://localhost:8787";
+// N-6：默认拉起本文件专属 dev-server（随机端口、独立内存 KV），避免与其他测试共享状态
+const BASE = (await isolatedBase()) || "http://localhost:8787";
 
 async function serverUp() {
   try {
-    const res = await fetch(`${BASE}/api/config`, { signal: AbortSignal.timeout(1500) });
+    // 批内多文件并发时 CPU 挤压，1500ms 会误判；单跑实测 ~300ms，放宽到 8s
+    const res = await fetch(`${BASE}/api/config`, { signal: AbortSignal.timeout(8000) });
     return res.ok;
   } catch {
     return false;

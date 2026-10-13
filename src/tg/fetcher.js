@@ -75,10 +75,15 @@ async function cachedFetch(upstream, ttl, ctx) {
   if (cache && ttl > 0 && res.ok && res.status === 200) {
     const clone = res.clone();
     const stored = stripHopHeaders(clone, clone.body);
-    // M-3：写入时明确 cache-control（私有 + 按 ttl）并记录写入时间，供命中后自校验
-    stored.headers.set("cache-control", `private, max-age=${Math.floor(ttl)}`);
+    // N-2：必须 public——CF Cache API 对 private 语义的响应直接拒存（413），
+    // 写 private 会让缓存静默全失效（命中率归零，全部回源 t.me）。
+    // 该缓存只存公开频道 t.me/s 预览页、仅供内部解析从不回给浏览器，public 无泄露面。
+    stored.headers.set("cache-control", `public, max-age=${Math.floor(ttl)}`);
     stored.headers.set(CACHED_AT, String(Date.now()));
-    const done = cache.put(cacheKey, stored).catch(() => {});
+    const done = cache.put(cacheKey, stored).catch((err) => {
+      // N-2：缓存写失败只降级为回源，但必须留痕（此前静默吞掉导致命中率归零无人察觉）
+      console.error("[cachedFetch] cache.put failed:", err && err.message ? err.message : err);
+    });
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(done);
     else await done;
   }
@@ -279,7 +284,7 @@ export async function proxyUrlFor(targetUrl, settings) {
   let s = "";
   if (settings && settings._bridgeToken && settings._bridgeHost) {
     try {
-      if (new URL(targetUrl).hostname === settings._bridgeHost) s = `&s=${await signProxyU(settings._bridgeToken, u)}`;
+      if (new URL(targetUrl).hostname === settings._bridgeHost) s = `&sig=${await signProxyU(settings._bridgeToken, u)}`;
     } catch {
       /* 非法 URL 不签名，proxyMedia 会走 host 白名单拒绝 */
     }

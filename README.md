@@ -341,7 +341,7 @@ GET  /api/admin/stats
 # RSS 订阅（公开，无需登录）
 GET  /rss.xml                    # 聚合全部可见频道
 GET  /api/rss                    # 同上
-GET  /api/rss?channel=<key>      # 单个频道（单频道可加 &limit= 调条数，上限 50；默认 10）
+GET  /api/rss?channel=<key>      # 单个频道（单频道可加 &limit= 调条数，上限 50；默认跟 general.pageSize）
 ```
 
 ## 12. 测试
