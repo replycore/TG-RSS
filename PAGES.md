@@ -1,5 +1,19 @@
 # Cloudflare Pages 部署说明
 
+## 部署方式速览（三种，按推荐排序）
+
+| 方式 | 操作 | 产物 | 适合 |
+|---|---|---|---|
+| **① Dashboard 连接 GitHub（推荐）** | Pages 项目 → Settings → Builds & deployments → Connect to Git，授权后选仓库+分支，push 即自动部署 | Pages（生产形态） | 日常更新，一次配置永久省心 |
+| **② Deploy 按钮一键部署** | 点 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/replycore/TG-RSS) → 登录 → 按向导走 | Workers（回退形态） | 新手首次体验；注意：按钮只建 Worker，不建 Pages |
+| **③ CLI 手动部署** | 见下方「首次部署」 | Pages 或 Workers | 本机调试、紧急回滚 |
+
+> 当前状态：本项目尚未连接 GitHub（全是 CLI 手工部署）。方式①需项目 Owner 在
+> Dashboard 里点几下完成 GitHub 授权（OAuth，必须人工操作，CLI/API 做不了）；
+> 连上后 `git push` 即自动构建部署，不用再跑命令。
+> 方式①连上后：构建命令留空（纯静态+Functions，无需构建），构建输出目录填 `public`，
+> 根目录的 `functions/[[path]].js` 会被自动识别为 Functions。
+
 TG-RSS 同一份代码兼容 **Cloudflare Workers** 与 **Cloudflare Pages** 两种部署形态：
 
 ```
