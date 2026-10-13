@@ -96,7 +96,7 @@ TG-RSS 部署在 Pages，私密频道桥接 `bridge/` **仍跑在你自己机器
 > 新版 TG-RSS 只发 HMAC 签名头（旧的 `x-token` 回退已按安全要求移除），
 > 旧版用 `x-token` 头调用 API（正常），旧版浏览器直链 `?token=`（头像、直链媒体）
 > 已被新版 bridge 移除支持——任一方向错序都会让私密频道部分功能 401。
-> 请把 bridge 与 TG-RSS 的升级安排在同一时段。详见 [README §9 私密频道桥接](./README.md#9-私密频道桥接bridge)。
+> 请把 bridge 与 TG-RSS 的升级安排在同一时段。桥接配置与接口详见 [README](./README.md#configuration-guide) / [README_CN](./README_CN.md#配置指南)。
 
 ## 环境变量与 Secrets
 
