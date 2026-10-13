@@ -7,6 +7,7 @@ import {
   parseCookies,
   serializeCookie,
   isValidToken,
+  timingSafeEqual,
 } from "./util.js";
 import {
   getAdminCredential,
@@ -84,6 +85,14 @@ export async function handleSetup(request, env, body) {
   const credential = await getAdminCredential(env);
   if (isInitialized(credential)) {
     throw new HttpError(409, "管理员已初始化，无法重复初始化", "already_initialized");
+  }
+  // L-6：可选的「环境级初始化码」——若设置了 env.SETUP_CODE，则初始化必须提交匹配的 code，
+  // 防止部署后在配置好密码前被他人抢先初始化。未设置则不受限（保持零配置体验）。
+  const requiredCode = String(env.SETUP_CODE || "");
+  if (requiredCode) {
+    const given = String(body?.code || "");
+    const ok = given.length === requiredCode.length && timingSafeEqual(given, requiredCode);
+    if (!ok) throw new HttpError(403, "初始化码不正确", "bad_setup_code");
   }
   const username = String(body?.username || "admin").trim().slice(0, 64) || "admin";
   const password = String(body?.password || "");

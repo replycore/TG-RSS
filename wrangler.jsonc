@@ -3,7 +3,7 @@
   "name": "tg-rss",
   "main": "src/index.js",
   "account_id": "<你的 Cloudflare 账号 ID>",
-  "compatibility_date": "2026-10-01",
+  "compatibility_date": "2026-10-13",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   // 自定义域名（改成你自己的域名，或删掉 routes 让它只跑 workers.dev）

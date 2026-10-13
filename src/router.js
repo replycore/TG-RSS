@@ -12,25 +12,43 @@ import * as admin from "./api/admin.js";
 import * as rss from "./api/rss.js";
 import { turnstileSiteKey } from "./turnstile.js";
 
-const VERSION = "1.2.7";
+const VERSION = "1.2.8";
 
 async function readBody(request) {
   if (request.method === "GET" || request.method === "HEAD") return {};
   const contentType = request.headers.get("content-type") || "";
-  if (!contentType.includes("json")) {
-    const raw = await request.text().catch(() => "");
-    if (!raw) return {};
-    try {
-      return JSON.parse(raw);
-    } catch {
-      throw new HttpError(400, "请求体必须是 JSON", "bad_json");
-    }
+  // L-4：请求体大小上限 1MB，防超大 POST 打爆内存（先看声明值，再按实际读取字节数硬截断）
+  const MAX_BODY = 1024 * 1024;
+  const declared = Number(request.headers.get("content-length") || 0);
+  if (Number.isFinite(declared) && declared > MAX_BODY) {
+    throw new HttpError(413, "请求体过大", "body_too_large");
   }
+  let raw = "";
+  if (request.body && typeof request.body.getReader === "function") {
+    const reader = request.body.getReader();
+    const dec = new TextDecoder();
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_BODY) {
+        try { await reader.cancel(); } catch { /* ignore */ }
+        throw new HttpError(413, "请求体过大", "body_too_large");
+      }
+      raw += dec.decode(value, { stream: true });
+    }
+    raw += dec.decode();
+  } else {
+    raw = await request.text().catch(() => "");
+    if (raw.length > MAX_BODY) throw new HttpError(413, "请求体过大", "body_too_large");
+  }
+  if (!raw) return {};
   try {
-    const data = await request.json();
+    const data = JSON.parse(raw);
     return data && typeof data === "object" ? data : {};
   } catch {
-    throw new HttpError(400, "JSON 解析失败", "bad_json");
+    throw new HttpError(400, contentType.includes("json") ? "JSON 解析失败" : "请求体必须是 JSON", "bad_json");
   }
 }
 
@@ -201,12 +219,17 @@ const CSP_HEADER = [
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
+  // M-5：禁止被任何站点 iframe（点击劫持防护）。与 public/_headers 静态规则一致。
+  "frame-ancestors 'none'",
 ].join("; ");
 
 function withCsp(response) {
   const contentType = response.headers.get("content-type") || "";
-  if (!contentType.includes("text/html")) return response;
   const headers = new Headers(response.headers);
+  // M-5：HTML 加 CSP（含 frame-ancestors，防点击劫持）；所有响应补 nosniff + referrer-policy
+  headers.set("x-content-type-options", "nosniff");
+  headers.set("referrer-policy", "strict-origin-when-cross-origin");
+  if (!contentType.includes("text/html")) return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
   headers.set("content-security-policy", CSP_HEADER);
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

@@ -16,7 +16,6 @@ export const KEYS = {
   rssTokenLimit: "auth:rssLimit:",
   // meta2：1.2.4 换前缀一次性作废旧缓存——旧缓存里的 bridge avatar URL 带 ?token=（泄露面）
   meta: "channel:meta2:",
-  sync: "channel:sync:",
 };
 
 export const DEFAULTS = {
@@ -68,7 +67,8 @@ export async function readJSON(env, key, fallback) {
 
 export async function writeJSON(env, key, value, opts = {}) {
   const store = kv(env);
-  const init = { type: "json" };
+  // Nit 3：Workers KV put 不需要/不识别 type 参数（那是 D1 的概念），移除
+  const init = {};
   if (opts.expirationTtl) init.expirationTtl = opts.expirationTtl;
   await store.put(key, JSON.stringify(value), init);
 }
@@ -159,14 +159,6 @@ export async function getChannelMeta(env, key) {
 
 export async function putChannelMeta(env, key, meta) {
   await writeJSON(env, KEYS.meta + key, meta, { expirationTtl: 30 * 24 * 3600 });
-}
-
-export async function getSyncState(env, key) {
-  return readJSON(env, KEYS.sync + key, null);
-}
-
-export async function putSyncState(env, key, state) {
-  await writeJSON(env, KEYS.sync + key, state, { expirationTtl: 7 * 24 * 3600 });
 }
 
 /* -------------------------------------------------------------- 管理员凭据 */

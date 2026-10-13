@@ -86,16 +86,21 @@ export async function downloadMediaToCache(peer, msg) {
   const tmp = path.join(dir, `${base}.${ext}.part`);
   const target = path.join(dir, `${base}.${ext}`);
 
-  let buffer;
+  // L-2：把 downloadMedia 的 outputFile 指向临时文件，让 teleproto 直接流式写盘，
+  // 而不是把整个视频装进内存 Buffer（几百 MB 视频会 OOM / GC 抖动）。
+  let result;
   try {
-    buffer = await client.downloadMedia(msg.media ?? msg, {});
+    result = await client.downloadMedia(msg.media ?? msg, { outputFile: tmp });
   } catch {
-    buffer = await client.downloadMedia(msg, {});
+    result = await client.downloadMedia(msg, { outputFile: tmp });
   }
-  if (!buffer || !buffer.length) throw new Error("媒体下载失败");
+  // 某些媒体类型（小图等）仍可能返回 Buffer；统一落到 tmp 再原子 rename
+  if (Buffer.isBuffer(result)) fs.writeFileSync(tmp, result);
 
-  fs.writeFileSync(tmp, buffer);
+  if (!fs.existsSync(tmp) || fs.statSync(tmp).size === 0) throw new Error("媒体下载失败");
   fs.renameSync(tmp, target);
+  // L-3：落盘后触发一次后台淘汰（不阻塞返回）
+  evictCacheAsync(dir);
   return target;
 }
 
@@ -104,6 +109,56 @@ export async function downloadMediaToCache(peer, msg) {
  * teleproto downloadMedia 内部已处理 PhotoCachedSize（内嵌字节）与
  * InputDocumentFileLocation(thumbSize) 下载两条路径。
  */
+// L-3：媒体缓存淘汰——上限 2GB / 单文件 7 天过期。后台异步执行，不阻塞请求。
+const CACHE_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+const CACHE_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+
+let evicting = false;
+function evictCacheAsync(dir) {
+  if (evicting) return; // 避免并发重复清理
+  evicting = true;
+  setImmediate(() => {
+    try {
+      evictCacheSync(dir);
+    } catch {
+      /* 忽略清理错误 */
+    } finally {
+      evicting = false;
+    }
+  });
+}
+
+export function evictCacheSync(dir) {
+  const now = Date.now();
+  const files = [];
+  let total = 0;
+  for (const f of fs.readdirSync(dir)) {
+    if (f.endsWith(".part")) continue;
+    const p = path.join(dir, f);
+    try {
+      const st = fs.statSync(p);
+      if (!st.isFile()) continue;
+      files.push({ p, mtime: st.mtimeMs, size: st.size });
+      total += st.size;
+    } catch {
+      /* 文件可能已被并发删除 */
+    }
+  }
+  // 1) 过期文件先删
+  for (const f of files) {
+    if (now - f.mtime > CACHE_MAX_AGE_MS) {
+      try { fs.rmSync(f.p, { force: true }); f.size = 0; } catch { /* ignore */ }
+    }
+  }
+  // 2) 仍超上限则按最旧优先删到上限内
+  const alive = files.filter((f) => f.size > 0).sort((a, b) => a.mtime - b.mtime);
+  let sum = alive.reduce((s, f) => s + f.size, 0);
+  for (const f of alive) {
+    if (sum <= CACHE_MAX_BYTES) break;
+    try { fs.rmSync(f.p, { force: true }); sum -= f.size; } catch { /* ignore */ }
+  }
+}
+
 export async function downloadThumbToCache(peer, msg, size) {
   const dir = config.cacheDir;
   fs.mkdirSync(dir, { recursive: true });

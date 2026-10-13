@@ -127,13 +127,17 @@ async function handleFeed(url) {
 
   const peer = await resolvePeer(channel);
   const info = await peerInfo(peer);
-  const messages = await fetchMessages(peer, { before, limit });
+  // L-8：多取 1 条用于精确判断是否还有下一页。原逻辑「取满 limit 就当有下一页」会在
+  // 频道尽头多一次空翻页（Worker 侧 loadFilledChannelPage 白跑一趟）。
+  const fetched = await fetchMessages(peer, { before, limit: limit + 1 });
+  const hasMore = fetched.length > limit;
+  const messages = fetched.slice(0, limit);
   const posts = messages.map((m) => messageToPost(m, peer, { username: info.username }));
 
   return {
     channel: info,
     posts,
-    next: messages.length >= limit && messages.length ? String(messages[messages.length - 1].id) : null,
+    next: hasMore && messages.length ? String(messages[messages.length - 1].id) : null,
   };
 }
 
@@ -230,6 +234,8 @@ async function main() {
   for (const f of fs.readdirSync(config.cacheDir)) {
     if (f.endsWith(".part")) fs.rmSync(path.join(config.cacheDir, f), { force: true });
   }
+  // 启动时按上限/过期淘汰一次历史缓存（L-3）
+  try { evictCacheSync(config.cacheDir); } catch { /* ignore */ }
 
   server.listen(config.port, config.host, async () => {
     console.log(`TG-RSS bridge listening on ${baseUrl()} （监听 ${config.host}:${config.port}）`);

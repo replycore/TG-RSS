@@ -172,10 +172,12 @@ function renderSetup(root, ctx) {
   const username = field("用户名", { name: "username", value: "admin", autocomplete: "username" });
   const password = field("密码（至少 8 位）", { name: "password", type: "password", autocomplete: "new-password" });
   const confirm = field("确认密码", { name: "confirm", type: "password", autocomplete: "new-password" });
+  // L-6：若服务端设置了环境变量 SETUP_CODE，初始化需带此口令；未设置则留空即可
+  const setupCode = field("初始化口令（服务端设置了 SETUP_CODE 才需要填）", { name: "code", type: "password", autocomplete: "off" });
   const submit = el("button", { class: "btn primary", type: "submit", text: "创建并登录" });
 
   const tsSetup = turnstileField(ctx);
-  const form = el("form", {}, [username.node, password.node, confirm.node, tsSetup.box, submit]);
+  const form = el("form", {}, [username.node, password.node, confirm.node, setupCode.node, tsSetup.box, submit]);
   form.onsubmit = async (e) => {
     e.preventDefault();
     if (password.input.value !== confirm.input.value) return toast("两次密码不一致", "error");
@@ -185,6 +187,7 @@ function renderSetup(root, ctx) {
       await api.setup({
         username: username.input.value || "admin",
         password: password.input.value,
+        code: setupCode.input.value,
         turnstileToken: await tsSetup.getToken(),
       });
       toast("初始化成功", "ok");

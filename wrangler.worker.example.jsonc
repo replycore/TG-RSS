@@ -5,7 +5,7 @@
   "name": "tg-rss",
   "account_id": "<你的 CF Account ID>",
   "main": "src/index.js",
-  "compatibility_date": "2026-10-01",
+  "compatibility_date": "2026-10-13",
   "workers_dev": true,
   // 自定义域名（仅当该域名的 zone 托管在你的 CF 账号内时可用；第三方 DNS 托管的域名请用 Pages）
   // "routes": [{ "pattern": "rss.example.com", "custom_domain": true }],

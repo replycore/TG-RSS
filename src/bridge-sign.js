@@ -27,9 +27,11 @@ export async function verifyBridgeResponse(bridge, res, method, pathWithQuery) {
   const now = Math.floor(Date.now() / 1000);
   // 窗口对称（v1.2.6 在请求方向修过同类问题）：bridge 侧窗口可配 60~3600，
   // 这里写死 300 会在「大窗口 + 较大时钟差」时误报（请求能过、响应过不了）。
-  // 策略：默认 300s；bridge 可通过 x-bridge-window-sec 头自报真实窗口，取两者较大值。
-  const declared = Number(res.headers.get("x-bridge-window-sec"));
-  const windowSec = Math.max(BRIDGE_SIGN_WINDOW_SEC, Number.isFinite(declared) && declared > 0 ? declared : 0);
+  // 策略：bridge 可通过 x-bridge-window-sec 自报窗口，取 max(默认, 本值)，但 cap 到 3600——
+  // H-2：该值已纳入签名载荷（改 header 就验不过），cap 到 3600 防中间人借超大窗口做重放。
+  const declaredRaw = Number(res.headers.get("x-bridge-window-sec"));
+  const declared = Number.isFinite(declaredRaw) && declaredRaw > 0 ? Math.min(declaredRaw, 3600) : 0;
+  const windowSec = Math.max(BRIDGE_SIGN_WINDOW_SEC, declared);
   // 把 bridge 时间戳带回来：stale 时调用方可算 drift（= bridge 时钟 - 本机时钟），给 NTP 指引
   const out = { bridgeTime: tsNum, windowSec };
   if (!Number.isFinite(tsNum) || Math.abs(now - tsNum) > windowSec) {
@@ -37,7 +39,7 @@ export async function verifyBridgeResponse(bridge, res, method, pathWithQuery) {
   }
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey("raw", enc.encode(token), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const payload = `${ts}\n${res.status}\n${String(method).toUpperCase()}\n${pathWithQuery}`;
+  const payload = `${ts}\n${res.status}\n${String(method).toUpperCase()}\n${pathWithQuery}\n${declared || ""}`;
   const mac = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
   const expected = btoa(String.fromCharCode(...new Uint8Array(mac)));
   // 恒定时间比较：避免按响应时间逐字节爆破 token 派生的签名

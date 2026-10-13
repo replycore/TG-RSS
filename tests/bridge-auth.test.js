@@ -199,16 +199,16 @@ test("serveFile：200/206/416 响应均带可验的签名头", async () => {
     const part = await hit("bytes=0-99");
     assert.equal(part.status, 206, "Range 应 206");
     assert.ok(part.sig, "206 响应必须有签名头（此前漏签 → Range 播放全 502）");
-    const v2 = await verifyBridgeResponse({ token }, new Response("{}", { status: 206, headers: { "x-bridge-timestamp": part.ts, "x-bridge-signature": part.sig } }), "GET", "/media?ch=-1001&m=7");
+    const v2 = await verifyBridgeResponse({ token }, new Response("{}", { status: 206, headers: { "x-bridge-timestamp": part.ts, "x-bridge-signature": part.sig, "x-bridge-window-sec": part.win } }), "GET", "/media?ch=-1001&m=7");
     assert.equal(v2.ok, true, `206 签名应验签通过：${JSON.stringify(v2)}`);
     // 状态码参与签名：206 的签名不能当 200 用
-    const v3 = await verifyBridgeResponse({ token }, new Response("{}", { status: 200, headers: { "x-bridge-timestamp": part.ts, "x-bridge-signature": part.sig } }), "GET", "/media?ch=-1001&m=7");
+    const v3 = await verifyBridgeResponse({ token }, new Response("{}", { status: 200, headers: { "x-bridge-timestamp": part.ts, "x-bridge-signature": part.sig, "x-bridge-window-sec": part.win } }), "GET", "/media?ch=-1001&m=7");
     assert.equal(v3.ok, false, "206 签名不得用于 200（防状态码篡改）");
 
     const bad = await hit("bytes=99999-100000");
     assert.equal(bad.status, 416, "越界 Range 应 416");
     assert.ok(bad.sig, "416 响应必须有签名头");
-    const v4 = await verifyBridgeResponse({ token }, new Response("{}", { status: 416, headers: { "x-bridge-timestamp": bad.ts, "x-bridge-signature": bad.sig } }), "GET", "/media?ch=-1001&m=7");
+    const v4 = await verifyBridgeResponse({ token }, new Response("{}", { status: 416, headers: { "x-bridge-timestamp": bad.ts, "x-bridge-signature": bad.sig, "x-bridge-window-sec": bad.win } }), "GET", "/media?ch=-1001&m=7");
     assert.equal(v4.ok, true, `416 签名应验签通过：${JSON.stringify(v4)}`);
 
     // 自报窗口：bridge 配 600s，Worker 应按 max(300, 600) 判定

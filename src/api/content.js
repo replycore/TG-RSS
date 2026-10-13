@@ -20,18 +20,10 @@ import {
   fetchPublicChannelPage,
   fetchBridgeFeed,
   decoratePostMedia,
+  resolveBridge,
 } from "../tg/fetcher.js";
 
 const MAX_FEED_CHANNELS = 8;
-
-export async function loadContext(env, request) {
-  const [general, mediaSettings, channels] = await Promise.all([
-    getGeneral(env),
-    getMediaSettings(env),
-    getChannels(env),
-  ]);
-  return { general, mediaSettings, channels };
-}
 
 export function visibleChannels(channels, authenticated) {
   // 私密频道即使没勾「隐藏」也一律需要认证（登录会话或 RSS token），
@@ -80,7 +72,12 @@ async function hydrateMeta(env, ctx, channel, pageChannel) {
       nz(pageChannel.title) !== nz(existing?.title) ||
       nz(pageChannel.description) !== nz(existing?.description));
   if (changed || (stale && merged.avatar)) {
-    putChannelMeta(env, channel.key, merged).catch(() => {});
+    // M-4：写 KV 用 waitUntil 后台化，不阻塞本请求（失败也保留已抓到的内容）
+    if (ctx && typeof ctx.waitUntil === "function") {
+      ctx.waitUntil(putChannelMeta(env, channel.key, merged).catch(() => {}));
+    } else {
+      putChannelMeta(env, channel.key, merged).catch(() => {});
+    }
   }
 
   return {
@@ -111,8 +108,16 @@ export async function loadChannelPage(env, ctx, channel, before = null, limit = 
     parsed = await fetchBridgeFeed(env, channel, before, limit);
   }
   const info = await hydrateMeta(env, ctx, channel, parsed.channel);
-  const posts = parsed.posts
-    .map((p) => decoratePostMedia(p, mediaSettings))
+  // H-1：桥接媒体的站内代理 URL 需用 bridge token 签名（signSettings 携带密钥/host），
+  // proxyMedia 据此拒绝伪造 u（否则未登录者可枚举私密频道的任意媒体）。
+  const bridge = await resolveBridge(env);
+  const signSettings = {
+    ...mediaSettings,
+    _bridgeToken: bridge?.token || null,
+    _bridgeHost: bridge?.host || null,
+  };
+  const decorated = await Promise.all(parsed.posts.map((p) => decoratePostMedia(p, signSettings)));
+  const posts = decorated
     // 统一补 #标签：公开频道解析出的与桥接返回的帖子都走到这里
     .map((p) => ({ ...p, tags: p.tags?.length ? p.tags : extractTags(p.textPlain || p.text || "") }))
     // 广告帖识别（内置 AD_TAGS + 后台自定义 adTagsExtra）→ 单页出口即过滤，信息流/频道页/RSS 全局隐藏
@@ -136,13 +141,17 @@ const PAGE_FILL_MAX_PAGES = 5;
  * （最多 PAGE_FILL_MAX_PAGES 页），避免整页被过滤空导致前端误判「到底了」。
  * 返回结构与 loadChannelPage 一致；游标 next 指向已消费掉的位置。
  */
-export async function loadFilledChannelPage(env, ctx, channel, before = null, limit = 20) {
+export async function loadFilledChannelPage(env, ctx, channel, before = null, limit = 20, budget = null) {
   let cursor = before;
   let next = null;
   let info = null;
   const collected = [];
   const seen = new Set();
   for (let page = 0; page < PAGE_FILL_MAX_PAGES; page += 1) {
+    // L-1：总抓取预算——多个频道并发补页时，用共享 budget 收敛 t.me 请求总量，
+    // 防「多频道 × 每频道多页」叠加超出单次 CPU/子请求预算。
+    if (budget && budget.remaining <= 0) break;
+    if (budget) budget.remaining -= 1;
     const result = await loadChannelPage(env, ctx, channel, cursor, limit);
     info = info || result.info;
     next = result.next;
@@ -235,13 +244,15 @@ export async function getFeed(request, env, ctx, url, authenticated) {
   const nextCursors = { ...cursors };
   delete nextCursors.__lastBatchTail;
   const perChannel = [];
+  // L-1：整次 feed 的总抓取预算（8 频道 × 每频道最多 5 页 = 40 次），并发共享、先到先得
+  const budget = { remaining: MAX_FEED_CHANNELS * PAGE_FILL_MAX_PAGES };
 
   await Promise.all(
     batch.map(async (ch) => {
       try {
         const before = typeof cursors[ch.key] === "string" ? cursors[ch.key] : null;
         // 统一走补页循环：仅媒体频道只投媒体帖；广告帖任何频道都不投（loadChannelPage 已过滤）
-        const page = await loadFilledChannelPage(env, ctx, ch, before, general.pageSize || 20);
+        const page = await loadFilledChannelPage(env, ctx, ch, before, general.pageSize || 20, budget);
         nextCursors[ch.key] = page.next ? String(page.next) : null;
         perChannel.push({ channel: page.info, posts: page.posts });
       } catch (err) {

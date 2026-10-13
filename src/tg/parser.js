@@ -437,9 +437,5 @@ export function parseSingleMessage(html) {
 }
 
 /** 供媒体模式快速筛选 */
-export function classifyMediaItem(item) {
-  return item.type;
-}
-
 // 供单测使用
 export const __internals = { scanTags, elementInner, attrValue, hasClass, textOf, stripTags };

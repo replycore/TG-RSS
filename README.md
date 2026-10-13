@@ -192,6 +192,7 @@ npx wrangler pages deploy public --project-name tg-rss
 | --- | --- |
 | `ADMIN_USERNAME` | 管理员用户名（默认 `admin`） |
 | `ADMIN_PASSWORD` | 设置后**优先生效**，后台无法改密，只能改环境变量 |
+| `SETUP_CODE` | 可选；设置后**初始化**管理员需带此口令（防裸站被人抢先初始化） |
 | `BRIDGE_URL` | 私密频道桥接地址，设置后优先后台配置 |
 | `BRIDGE_TOKEN` | 桥接令牌 |
 
@@ -224,6 +225,8 @@ PUBLIC_URL=https://tg-bridge.example.com
 ## 9. 私密频道桥接（bridge/）
 
 桥接是跑在**你自己的机器**上的常驻程序：用你的 Telegram 账号登录一次，之后向 Worker 提供 HTTPS 接口。
+
+> ⚠️ 需**整仓 clone** 后把 `bridge/` 当作独立 Node 项目运行（`bridge/package.json` + `bridge/node_modules` 依赖 teleproto）；`bridge/` 不能脱离仓库单独拷贝运行。
 
 ```bash
 cd bridge
@@ -338,7 +341,7 @@ GET  /api/admin/stats
 # RSS 订阅（公开，无需登录）
 GET  /rss.xml                    # 聚合全部可见频道
 GET  /api/rss                    # 同上
-GET  /api/rss?channel=<key>      # 单个频道
+GET  /api/rss?channel=<key>      # 单个频道（单频道可加 &limit= 调条数，上限 50；默认 10）
 ```
 
 ## 12. 测试

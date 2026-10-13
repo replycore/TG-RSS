@@ -70,12 +70,12 @@ test("proxyAll=false：bridge 媒体仍恒走代理（裸 URL 无认证必 401�
     { key: "p1", username: null },
   );
   const settings = { proxyAll: false, types: {} };
-  const decorated = decoratePostMedia(bridgePost, settings);
+  const decorated = await decoratePostMedia(bridgePost, settings);
   assert.equal(decorated.media[0].src.startsWith("/api/media/proxy?u="), true, "proxyAll=false 时 bridge 媒体也必须代理");
   assert.equal("forceProxy" in decorated.media[0], false, "内部标记不外泄到响应");
 
   // 公开频道（无 forceProxy）在 proxyAll=false 时保持直链
-  const pub = decoratePostMedia(
+  const pub = await decoratePostMedia(
     { media: [{ type: "image", url: "https://cdn.example.com/a.jpg" }] },
     settings,
   );
@@ -129,4 +129,38 @@ test("fetchBridgeFeed 401：按 bridge 自报的 windowSec 判定时钟差，写
   } finally {
     globalThis.fetch = realFetch;
   }
+});
+
+test("H-1：代理 URL 签名往返 + 篡改/缺签/错 token 拒绝", async () => {
+  const { signProxyU, verifyProxySig } = await import("../src/proxy-sign.js");
+  const token = "bridge-token-abc";
+  const u = Buffer.from("https://bridge.example.com/media?ch=-1001&m=5").toString("base64url");
+  const sig = await signProxyU(token, u);
+  assert.ok(sig, "应产出签名");
+  assert.equal(await verifyProxySig(token, u, sig), true, "合法签名应通过");
+  // 篡改 u（枚举改 ch/m）
+  const tampered = Buffer.from("https://bridge.example.com/media?ch=-9999&m=1").toString("base64url");
+  assert.equal(await verifyProxySig(token, tampered, sig), false, "篡改 u 后签名必须失效");
+  // 错 token
+  assert.equal(await verifyProxySig("wrong-token", u, sig), false, "错 token 必须拒绝");
+  // 缺签名
+  assert.equal(await verifyProxySig(token, u, null), false, "缺签名必须拒绝");
+  assert.equal(await verifyProxySig(token, u, ""), false, "空签名必须拒绝");
+  // token 空 → 不签名（返回空串），验签也拒绝
+  assert.equal(await signProxyU("", u), "", "token 空不签名");
+});
+
+test("H-2：响应验签窗口 cap 到 3600（防中间人借超大 x-bridge-window-sec 重放）", async () => {
+  const { verifyBridgeResponse } = await import("../src/bridge-sign.js");
+  const token = "t";
+  // bridge 自报超大窗口 999999999（攻击者可篡改该头）
+  const r = new Response("{}", { status: 200, headers: {
+    "x-bridge-timestamp": String(Math.floor(Date.now() / 1000) - 4000),
+    "x-bridge-signature": "x", // 签名本就不对，但先看窗口判定
+    "x-bridge-window-sec": "999999999",
+  } });
+  const out = await verifyBridgeResponse({ token }, r, "GET", "/feed");
+  // 窗口应被 cap 到 3600：4000s 前的戳 > 3600 → stale（而非借超大窗口放行）
+  assert.equal(out.reason, "stale", `超大窗口应被 cap，过老的戳仍判 stale：${JSON.stringify(out)}`);
+  assert.ok(out.windowSec <= 3600, `窗口不得超 3600，实际 ${out.windowSec}`);
 });

@@ -7,6 +7,7 @@ import { HttpError, absoluteUrl, b64urlEncode } from "../util.js";
 import { parseChannelPage } from "./parser.js";
 import { getBridgeSettings, getChannelMeta, putChannelMeta } from "../store.js";
 import { bridgeSignedHeaders, verifyBridgeResponse } from "../bridge-sign.js";
+import { signProxyU } from "../proxy-sign.js";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
@@ -30,6 +31,12 @@ function stripHopHeaders(response, body) {
   return new Response(body, { status: response.status, statusText: response.statusText, headers });
 }
 
+/**
+ * M-3：缓存新鲜度自校验 + 明确 cache-control。
+ * 原先命中即返回且不设 cache-control，边缘/浏览器可能把私密/短 TTL 内容当公开无限缓存。
+ */
+const CACHED_AT = "x-cache-stored-at";
+
 async function cachedFetch(upstream, ttl, ctx) {
   const cache = getCache();
   const cacheKey = new Request(`https://tg-rss-cache.invalid/${encodeURIComponent(upstream)}`, {
@@ -38,7 +45,14 @@ async function cachedFetch(upstream, ttl, ctx) {
   if (cache && ttl > 0) {
     try {
       const hit = await cache.match(cacheKey);
-      if (hit) return hit;
+      if (hit) {
+        // 命中后自校验 age：边缘可能返回已过期条目，按 ttl 重新回源
+        const storedAt = Number(hit.headers.get(CACHED_AT));
+        const ageSec = storedAt > 0 ? (Date.now() - storedAt) / 1000 : 0;
+        if (Number.isFinite(storedAt) && storedAt > 0 && ageSec <= ttl) return hit;
+        // 过期 → 删除并回源
+        try { await cache.delete(cacheKey); } catch { /* ignore */ }
+      }
     } catch {
       /* ignore */
     }
@@ -61,6 +75,9 @@ async function cachedFetch(upstream, ttl, ctx) {
   if (cache && ttl > 0 && res.ok && res.status === 200) {
     const clone = res.clone();
     const stored = stripHopHeaders(clone, clone.body);
+    // M-3：写入时明确 cache-control（私有 + 按 ttl）并记录写入时间，供命中后自校验
+    stored.headers.set("cache-control", `private, max-age=${Math.floor(ttl)}`);
+    stored.headers.set(CACHED_AT, String(Date.now()));
     const done = cache.put(cacheKey, stored).catch(() => {});
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(done);
     else await done;
@@ -130,12 +147,17 @@ export function getBridgeConfig(env) {
 
 export async function resolveBridge(env) {
   const fromEnv = getBridgeConfig(env);
-  if (fromEnv.url) return { url: fromEnv.url.replace(/\/+$/, ""), token: fromEnv.token, fromEnv: true };
+  if (fromEnv.url) return { url: fromEnv.url.replace(/\/+$/, ""), token: fromEnv.token, host: hostOf(fromEnv.url), fromEnv: true };
   const stored = await getBridgeSettings(env);
   if (stored && stored.enabled && stored.url) {
-    return { url: String(stored.url).replace(/\/+$/, ""), token: stored.token || "", fromEnv: false };
+    return { url: String(stored.url).replace(/\/+$/, ""), token: stored.token || "", host: hostOf(stored.url), fromEnv: false };
   }
   return null;
+}
+
+/** 安全地取 host（非法 URL 返回 null） */
+function hostOf(u) {
+  try { return new URL(String(u)).hostname; } catch { return null; }
 }
 
 export async function fetchBridgeFeed(env, channel, before = null, limit = 20) {
@@ -196,8 +218,16 @@ export async function fetchBridgeFeed(env, channel, before = null, limit = 20) {
     channel: {
       title: data.channel?.title || channel.name,
       username: data.channel?.username || channel.username || null,
-      // avatar 走 Worker 代理：bridge 裸 URL 无认证会被拒（token 不进 URL/HTML）
-      avatar: data.channel?.avatar ? proxyUrlFor(absoluteUrl(data.channel?.avatar), { proxyAll: true }) || null : null,
+      // avatar 走 Worker 代理：bridge 裸 URL 无认证会被拒（token 不进 URL/HTML）。
+      // H-1：bridge host 的代理 URL 必须签名，否则 proxyMedia 会 403。
+      avatar:
+        data.channel?.avatar
+          ? (await proxyUrlFor(absoluteUrl(data.channel?.avatar), {
+              proxyAll: true,
+              _bridgeToken: bridge.token || null,
+              _bridgeHost: bridge.host || null,
+            })) || null
+          : null,
       description: data.channel?.description || "",
       counters: data.channel?.counters || {},
     },
@@ -237,27 +267,41 @@ export function normalizeBridgePost(post, channel) {
 
 /* -------------------------------------------------------- 媒体地址 → 代理地址 */
 
-export function proxyUrlFor(targetUrl, settings) {
+/**
+ * 目标 URL → 站内代理 URL。
+ * 桥接主机（settings._bridgeHost）的媒体会用 settings._bridgeToken 对 u 签名（H-1），
+ * proxyMedia 据此拒绝伪造 u（改 base64 里的 ch/m）的枚举请求。
+ */
+export async function proxyUrlFor(targetUrl, settings) {
   if (!targetUrl) return null;
   if (settings && settings.proxyAll === false) return targetUrl;
-  return `/api/media/proxy?u=${b64urlEncode(targetUrl)}`;
+  const u = b64urlEncode(targetUrl);
+  let s = "";
+  if (settings && settings._bridgeToken && settings._bridgeHost) {
+    try {
+      if (new URL(targetUrl).hostname === settings._bridgeHost) s = `&s=${await signProxyU(settings._bridgeToken, u)}`;
+    } catch {
+      /* 非法 URL 不签名，proxyMedia 会走 host 白名单拒绝 */
+    }
+  }
+  return `/api/media/proxy?u=${u}${s}`;
 }
 
-export function decoratePostMedia(post, settings) {
-  return {
-    ...post,
-    media: (post.media || []).map((m) => {
+export async function decoratePostMedia(post, settings) {
+  const media = await Promise.all(
+    (post.media || []).map(async (m) => {
       // 桥接媒体（forceProxy）无视 proxyAll=false 恒走代理——裸 bridge URL 无认证必 401
       const eff = m.forceProxy ? { ...settings, proxyAll: true } : settings;
       const out = { ...m };
       delete out.forceProxy;
       return {
         ...out,
-        src: proxyUrlFor(m.url, eff),
+        src: await proxyUrlFor(m.url, eff),
         direct: m.url,
-        thumbSrc: proxyUrlFor(m.thumb, eff),
+        thumbSrc: await proxyUrlFor(m.thumb, eff),
         link: m.permalink || post.url,
       };
-    }),
-  };
+    })
+  );
+  return { ...post, media };
 }

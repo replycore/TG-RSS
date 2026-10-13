@@ -154,7 +154,8 @@ function renderCard(item, ctx, type) {
 function activate(item, type) {
   if (type === "file") {
     if (item.direct || item.src) {
-      window.open(item.direct || item.src, "_blank", "noopener");
+      // M-2：优先站内代理 src（bridge 媒体的 direct 无认证会 401）
+      window.open(item.src || item.direct, "_blank", "noopener");
     } else if (item.link || item.post?.url) {
       window.open(item.link || item.post.url, "_blank", "noopener");
     } else {

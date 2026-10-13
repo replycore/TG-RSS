@@ -108,7 +108,8 @@ export function openLightbox(item) {
 
   const inner = el("div", { class: "lb-inner" });
   const src = item.src || item.direct;
-  const direct = item.direct || src;
+  // M-2：新窗口/激活优先用站内代理 src（bridge 媒体的 direct 是裸 bridge URL，无认证会 401）
+  const direct = src || item.direct;
 
   if (item.type === "video" && src) {
     inner.append(
@@ -137,7 +138,7 @@ export function openLightbox(item) {
         class: "btn sm",
         type: "button",
         text: "新窗口打开",
-        onclick: () => window.open(direct, "_blank", "noopener"),
+        onclick: () => window.open(direct || src, "_blank", "noopener"),
       }),
     );
   }
@@ -258,7 +259,7 @@ export function downloadBtn(item, label = "下载") {
 /* ------------------------------------------------------- 单条消息渲染 */
 
 export function renderPost(post, ctx = {}) {
-  const config = ctx.config || {};
+  const config = ctx.state?.config || {};
   const article = el("article", { class: "post" });
 
   const head = el("div", { class: "post-head" });
@@ -339,7 +340,8 @@ function renderVideo(item, post, ctx) {
         type: "button",
         text: "新窗口",
         title: "调用浏览器/系统默认播放器",
-        onclick: () => window.open(item.direct, "_blank", "noopener"),
+        // M-2：优先站内代理 src（bridge 媒体的 direct 是裸 bridge URL，无认证会 401）
+        onclick: () => window.open(item.src || item.direct, "_blank", "noopener"),
       }),
     );
   }

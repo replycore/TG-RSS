@@ -11,6 +11,7 @@ import {
 } from "../util.js";
 import { getGeneral, getMediaSettings, getChannels } from "../store.js";
 import { bridgeSignedHeaders, verifyBridgeResponse } from "../bridge-sign.js";
+import { verifyProxySig } from "../proxy-sign.js";
 import { loadChannelPage, visibleChannels, findChannel, assertVisible } from "./content.js";
 import { resolveBridge, fetchPublicChannelPage } from "../tg/fetcher.js";
 import { parseSingleMessage } from "../tg/parser.js";
@@ -228,6 +229,23 @@ function hostAllowed(hostname, bridge) {
 
 const MAX_REDIRECTS = 3;
 const MAX_PROXY_BYTES = 256 * 1024 * 1024; // 256MB，视频流够用又挡住异常巨响应
+
+// L-5：字节计数流——透传中实时统计，超限即中断（上游声明长度缺失/虚报时的兜底）
+class ByteCounter extends TransformStream {
+  constructor(limit) {
+    let seen = 0;
+    super({
+      transform(chunk, controller) {
+        seen += chunk.byteLength;
+        if (seen > limit) {
+          controller.error(new Error("media_too_large"));
+          return;
+        }
+        controller.enqueue(chunk);
+      },
+    });
+  }
+}
 const PROXY_RATE_MAX = 120; // 每 IP 每分钟
 const PROXY_RATE_WINDOW = 60; // 秒
 const proxyBuckets = new Map();
@@ -327,6 +345,12 @@ export async function proxyMedia(request, env, ctx, url) {
   }
   if (!hostAllowed(target.hostname, bridge)) {
     throw new HttpError(403, "该媒体地址不在白名单内", "host_not_allowed");
+  }
+  // H-1：桥接主机的代理必须带本 Worker 对 u 的签名（<img> 无法带 header，签名在 URL 里）。
+  // 拒绝未签名的 u → 挡住 RSS 泄露的 bridge URL 被枚举（ch/m 暴力）读取私密频道任意媒体。
+  if (isBridge && bridge.token) {
+    const ok = await verifyProxySig(bridge.token, raw, url.searchParams.get("sig"));
+    if (!ok) throw new HttpError(403, "媒体代理链接未签名或签名无效", "bad_proxy_sig");
   }
 
   const filename = sanitizeFilename(nameHint || basenameOf(target));
@@ -429,7 +453,9 @@ export async function proxyMedia(request, env, ctx, url) {
   const outHeaders = new Headers();
   res.headers.forEach((value, key) => {
     const k = key.toLowerCase();
-    if (["set-cookie", "content-encoding", "content-security-policy", "x-frame-options", "strict-transport-security"].includes(k)) return;
+    // Nit 5：同时剥 content-length——dev 服务器（localhost:8080）返回 gzip 时，
+    // fetch 已解压 body 但上游 content-length 仍是压缩后大小，保留会导致 length 与实际 body 不符
+    if (["set-cookie", "content-encoding", "content-length", "content-security-policy", "x-frame-options", "strict-transport-security"].includes(k)) return;
     outHeaders.set(key, value);
   });
   outHeaders.set("access-control-allow-origin", "*");
@@ -438,7 +464,11 @@ export async function proxyMedia(request, env, ctx, url) {
   applyDocSecurity(outHeaders, docMode);
   if (dl) outHeaders.set("content-disposition", contentDisposition(filename));
 
-  const out = new Response(res.body, {
+  // L-5：仅检查上游声明的 content-length 不够（缺失或虚报时无兜底）。
+  // 用计数流在透传过程中实际统计字节数，超限即中断——即使上游谎报/不报长度也封顶。
+  const counted = res.body ? res.body.pipeThrough(new ByteCounter(MAX_PROXY_BYTES)) : null;
+
+  const out = new Response(counted, {
     status: res.status,
     statusText: res.statusText,
     headers: outHeaders,

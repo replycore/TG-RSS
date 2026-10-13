@@ -85,13 +85,16 @@ function hmacB64(token, payload) {
 export function responseSignatureHeaders({ token, status, method, pathWithQuery, windowSec }) {
   if (!token) return {};
   const ts = String(Math.floor(Date.now() / 1000));
-  const payload = `${ts}\n${status}\n${String(method || "GET").toUpperCase()}\n${pathWithQuery}`;
+  // H-2：把 windowSec 纳入签名载荷——否则中间人可篡改 x-bridge-window-sec 放宽时间窗做重放。
+  // 载荷里带上它，改 header 就验不过。cap 到 3600（与 Worker 侧对齐）。
+  const win = Number(windowSec) > 0 ? String(Math.min(Math.floor(windowSec), 3600)) : "";
+  const payload = `${ts}\n${status}\n${String(method || "GET").toUpperCase()}\n${pathWithQuery}\n${win}`;
   return {
     "x-bridge-timestamp": ts,
     "x-bridge-signature": hmacB64(token, payload),
     // 自报签名窗口，TG-RSS 响应验签按 max(自身默认, 本值) 判定——
     // 否则 bridge 配了大窗口 + 时钟差较大时，响应方向会误判超时（v1.2.6 请求方向同类问题的对称修复）
-    ...(Number(windowSec) > 0 ? { "x-bridge-window-sec": String(Math.floor(windowSec)) } : {}),
+    ...(win ? { "x-bridge-window-sec": win } : {}),
   };
 }
 

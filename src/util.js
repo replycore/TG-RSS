@@ -353,7 +353,10 @@ export function absoluteUrl(value) {
   const v = String(value).trim();
   if (!v || /\s/.test(v)) return null; // 含空白的字符串视为非法地址
   try {
-    return new URL(v, "https://t.me").toString();
+    const u = new URL(v, "https://t.me");
+    // L-7：只放行 http(s)。防 javascript:/data: 等在「t.me 模板」假设下混入下游（如代理/媒体 URL）。
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return u.toString();
   } catch {
     return null;
   }
