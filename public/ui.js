@@ -1,6 +1,36 @@
 /** DOM 工具、格式化、消息卡片渲染、灯箱播放器 */
 
 import { api } from "./api.js";
+import { t, reg } from "./i18n.js";
+
+reg("ui", {
+  justNow: { zh: "刚刚", en: "Just now" },
+  minutesAgo: { zh: "{n} 分钟前", en: "{n} min ago" },
+  hoursAgo: { zh: "{n} 小时前", en: "{n} hr ago" },
+  daysAgo: { zh: "{n} 天前", en: "{n} days ago" },
+  download: { zh: "下载", en: "Download" },
+  downloadFile: { zh: "下载文件", en: "Download file" },
+  openNewWindow: { zh: "新窗口打开", en: "Open in new window" },
+  original: { zh: "原文", en: "Original" },
+  close: { zh: "关闭", en: "Close" },
+  views: { zh: "{n} 浏览", en: "{n} views" },
+  comments: { zh: "{n} 评论", en: "{n} comments" },
+  forwardedFrom: { zh: "转发自 {name}", en: "Forwarded from {name}" },
+  viewInTelegram: { zh: "在 Telegram 查看", en: "View in Telegram" },
+  video: { zh: "视频", en: "Video" },
+  nativePlayer: { zh: "浏览器原生播放器", en: "Browser native player" },
+  fullscreenPlay: { zh: "全屏播放", en: "Fullscreen" },
+  newWindow: { zh: "新窗口", en: "New window" },
+  systemPlayerHint: { zh: "调用浏览器/系统默认播放器", en: "Open with browser/system default player" },
+  viewLarge: { zh: "查看大图", en: "View full size" },
+  audio: { zh: "音频", en: "Audio" },
+  file: { zh: "文件", en: "File" },
+  open: { zh: "打开", en: "Open" },
+  fetchFile: { zh: "获取文件", en: "Fetch file" },
+  parsing: { zh: "解析中…", en: "Resolving…" },
+  parseFailed: { zh: "解析失败", en: "Failed to resolve" },
+  loadMore: { zh: "加载更多", en: "Load more" },
+});
 
 /* ------------------------------------------------------------ DOM 基础 */
 
@@ -59,10 +89,10 @@ export function fmtDate(value) {
   const minute = 60 * 1000;
   const hour = 60 * minute;
   const day = 24 * hour;
-  if (diff < minute) return "刚刚";
-  if (diff < hour) return `${Math.floor(diff / minute)} 分钟前`;
-  if (diff < day) return `${Math.floor(diff / hour)} 小时前`;
-  if (diff < 7 * day) return `${Math.floor(diff / day)} 天前`;
+  if (diff < minute) return t("ui.justNow");
+  if (diff < hour) return t("ui.minutesAgo", { n: Math.floor(diff / minute) });
+  if (diff < day) return t("ui.hoursAgo", { n: Math.floor(diff / hour) });
+  if (diff < 7 * day) return t("ui.daysAgo", { n: Math.floor(diff / day) });
   const d = new Date(t);
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -137,7 +167,7 @@ export function openLightbox(item) {
       el("button", {
         class: "btn sm",
         type: "button",
-        text: "新窗口打开",
+        text: t("ui.openNewWindow"),
         onclick: () => window.open(direct || src, "_blank", "noopener"),
       }),
     );
@@ -146,13 +176,13 @@ export function openLightbox(item) {
   if (lbDl) bar.append(lbDl);
   if (item.messageUrl) {
     bar.append(
-      el("a", { class: "btn sm", href: item.messageUrl, target: "_blank", rel: "noopener", text: "原文" }),
+      el("a", { class: "btn sm", href: item.messageUrl, target: "_blank", rel: "noopener", text: t("ui.original") }),
     );
   }
   inner.append(bar);
   box.append(inner);
   box.append(
-    el("button", { class: "lb-close", type: "button", "aria-label": "关闭", text: "×", onclick: closeLightbox }),
+    el("button", { class: "lb-close", type: "button", "aria-label": t("ui.close"), text: "×", onclick: closeLightbox }),
   );
   box.onclick = (e) => { if (e.target === box) closeLightbox(); };
 }
@@ -250,10 +280,10 @@ export function downloadHref(item) {
 }
 
 /** 下载按钮（没有可用地址时返回 null，由调用方决定是否跳过） */
-export function downloadBtn(item, label = "下载") {
+export function downloadBtn(item, label = null) {
   const href = downloadHref(item);
   if (!href) return null;
-  return el("a", { class: "btn sm", href, download: "", text: label, title: "下载文件" });
+  return el("a", { class: "btn sm", href, download: "", text: label ?? t("ui.download"), title: t("ui.downloadFile") });
 }
 
 /* ------------------------------------------------------- 单条消息渲染 */
@@ -266,12 +296,12 @@ export function renderPost(post, ctx = {}) {
   const channelName = post.channelName || post.channel;
   if (channelName) head.append(el("a", { class: "ch", href: `#/c/${encodeURIComponent(post.channelKey || post.channel)}`, text: channelName }));
   if (config.showDate !== false && post.date) head.append(el("span", { class: "sep", text: "·" }), el("time", { datetime: post.date, text: fmtDate(post.date) }));
-  if (config.showViews && post.views) head.append(el("span", { class: "sep", text: "·" }), el("span", { text: `${post.views} 浏览` }));
-  if (post.comments) head.append(el("span", { class: "sep", text: "·" }), el("span", { text: `${post.comments} 评论` }));
+  if (config.showViews && post.views) head.append(el("span", { class: "sep", text: "·" }), el("span", { text: t("ui.views", { n: post.views }) }));
+  if (post.comments) head.append(el("span", { class: "sep", text: "·" }), el("span", { text: t("ui.comments", { n: post.comments }) }));
   article.append(head);
 
   if (post.author && post.author.name) {
-    article.append(el("div", { class: "muted", style: { fontSize: "13px", marginBottom: "4px" }, text: `转发自 ${post.author.name}` }));
+    article.append(el("div", { class: "muted", style: { fontSize: "13px", marginBottom: "4px" }, text: t("ui.forwardedFrom", { name: post.author.name }) }));
   }
 
   if (post.textHtml) {
@@ -290,7 +320,7 @@ export function renderPost(post, ctx = {}) {
 
   const foot = el("div", { class: "post-foot" });
   if (post.url) {
-    foot.append(el("a", { href: post.url, target: "_blank", rel: "noopener", text: "在 Telegram 查看" }));
+    foot.append(el("a", { href: post.url, target: "_blank", rel: "noopener", text: t("ui.viewInTelegram") }));
   }
   article.append(foot);
   return article;
@@ -320,8 +350,8 @@ function renderVideo(item, post, ctx) {
   const bar = el("div", { class: "media-inline" });
   bar.append(
     el("div", { class: "meta" }, [
-      el("div", { class: "title", text: "视频" }),
-      el("div", { class: "sub", text: [item.duration, item.size].filter(Boolean).join(" · ") || "浏览器原生播放器" }),
+      el("div", { class: "title", text: t("ui.video") }),
+      el("div", { class: "sub", text: [item.duration, item.size].filter(Boolean).join(" · ") || t("ui.nativePlayer") }),
     ]),
   );
   const actions = el("div", { class: "actions" });
@@ -329,7 +359,7 @@ function renderVideo(item, post, ctx) {
     el("button", {
       class: "btn sm",
       type: "button",
-      text: "全屏播放",
+      text: t("ui.fullscreenPlay"),
       onclick: () => openLightbox({ ...item, date: post.date, messageUrl: post.url }),
     }),
   );
@@ -338,8 +368,8 @@ function renderVideo(item, post, ctx) {
       el("button", {
         class: "btn sm",
         type: "button",
-        text: "新窗口",
-        title: "调用浏览器/系统默认播放器",
+        text: t("ui.newWindow"),
+        title: t("ui.systemPlayerHint"),
         // M-2：优先站内代理 src（bridge 媒体的 direct 是裸 bridge URL，无认证会 401）
         onclick: () => window.open(item.src || item.direct, "_blank", "noopener"),
       }),
@@ -362,7 +392,7 @@ function renderImage(item, post) {
     box.append(img);
     // 图片本身即可点击放大：操作行只放「查看大图 / 下载」，不再叠加播放键图标
     const actions = el("div", { class: "media-actions" }, [
-      el("button", { class: "btn sm", type: "button", text: "查看大图", onclick: open }),
+      el("button", { class: "btn sm", type: "button", text: t("ui.viewLarge"), onclick: open }),
     ]);
     const imgDl = downloadBtn(item);
     if (imgDl) actions.append(imgDl);
@@ -377,8 +407,8 @@ function renderAudio(item, post) {
   const wrap = el("div", { class: "media-inline", style: { display: "grid", gap: "8px" } });
   wrap.append(
     el("div", { class: "meta" }, [
-      el("div", { class: "title", text: item.name || "音频" }),
-      el("div", { class: "sub", text: [item.duration, item.size].filter(Boolean).join(" · ") || "音频" }),
+      el("div", { class: "title", text: item.name || t("ui.audio") }),
+      el("div", { class: "sub", text: [item.duration, item.size].filter(Boolean).join(" · ") || t("ui.audio") }),
     ]),
   );
   if (src) wrap.append(el("audio", { controls: true, preload: "none", src }));
@@ -395,7 +425,7 @@ function renderFile(item, post, index) {
   wrap.append(el("div", { class: "ico", text: ext }));
   wrap.append(
     el("div", { class: "info" }, [
-      el("div", { class: "nm", text: item.name || "文件" }),
+      el("div", { class: "nm", text: item.name || t("ui.file") }),
       el("div", { class: "sz", text: item.size || "" }),
     ]),
   );
@@ -410,7 +440,7 @@ function renderFile(item, post, index) {
         href: item.src || item.direct,
         target: "_blank",
         rel: "noopener",
-        text: "打开",
+        text: t("ui.open"),
       }),
     );
     const fileDl = downloadBtn(item);
@@ -420,11 +450,11 @@ function renderFile(item, post, index) {
       el("button", {
         class: "btn sm",
         type: "button",
-        text: "获取文件",
+        text: t("ui.fetchFile"),
         onclick: async (e) => {
           const btn = e.currentTarget;
           btn.disabled = true;
-          btn.textContent = "解析中…";
+          btn.textContent = t("ui.parsing");
           try {
             const info = await api.doc({ key: post.channelKey, post: post.postId, i: index });
             if (info.url) {
@@ -433,10 +463,10 @@ function renderFile(item, post, index) {
               window.open(info.link, "_blank", "noopener");
             }
           } catch (err) {
-            toast(err.message || "解析失败", "error");
+            toast(err.message || t("ui.parseFailed"), "error");
           } finally {
             btn.disabled = false;
-            btn.textContent = "获取文件";
+            btn.textContent = t("ui.fetchFile");
           }
         },
       }),
@@ -444,7 +474,7 @@ function renderFile(item, post, index) {
   }
   if (item.link || post.url) {
     actions.append(
-      el("a", { class: "btn sm", href: item.link || post.url, target: "_blank", rel: "noopener", text: "原文" }),
+      el("a", { class: "btn sm", href: item.link || post.url, target: "_blank", rel: "noopener", text: t("ui.original") }),
     );
   }
   wrap.append(actions);
@@ -456,7 +486,7 @@ function renderFile(item, post, index) {
  * 「加载更多」控件：直接持有 button 引用，避免反复 querySelector 产生空引用。
  */
 export function createMoreControls(onClick) {
-  const button = el("button", { class: "btn", type: "button", text: "加载更多", onclick: onClick });
+  const button = el("button", { class: "btn", type: "button", text: t("ui.loadMore"), onclick: onClick });
   const node = el("div", { class: "loadmore" }, [button]);
   return {
     node,

@@ -1,14 +1,27 @@
 # TG-RSS
 
+> **English** — TG-RSS is a self-hosted **Telegram channel reader & RSS generator** that runs on Cloudflare Workers or Cloudflare Pages (one codebase, both deployment modes).
+>
+> - **Public channels** are fetched directly from `t.me/s/<channel>` preview pages — no external services required.
+> - **Private channels** are relayed by the bundled [`bridge/`](./bridge) program (your own Telegram account), with HMAC signing in both directions (worker ↔ bridge).
+> - **Reading**: reverse-chronological multi-channel feed, media mode (video / image / audio / files with native browser playback), tag filtering, dark mode.
+> - **RSS**: `/rss.xml` (all channels) or per-channel `/api/rss?channel=<key>`, optionally token-gated.
+> - **Admin panel**: channels, visibility, sorting, RSS token, Turnstile login protection — everything stored in Workers KV; private channels are enforced **server-side (403)**, not just hidden in the UI.
+> - **Bilingual UI**: 简体中文 (default) / English, switchable from the header.
+>
+> 🌐 **Live demo: https://rss.new.tg** · Docs: [PAGES.md](./PAGES.md) (Pages deployment) · [CONFIG.md](./CONFIG.md) (configuration) · [简体中文](#tg-rss)
+
 部署在 **Cloudflare Workers** 或 **Cloudflare Pages** 上的 Telegram 频道阅读器（双兼容，一份代码两种部署形态）。
 
 - **[PAGES.md](./PAGES.md)** — Cloudflare Pages 部署说明（项目创建、KV 绑定、域名绑定含第三方 CNAME、回退 Worker）
+- 🌐 **公开 Demo：https://rss.new.tg**
 
 - 公开频道：Cloudflare 直接抓取 `t.me/s/<频道>` 预览页，无需任何外部服务
 - 私密频道：配置自己的 Telegram 账号，通过仓库内的 `bridge/` 程序转发到网页
 - 管理员登录后台配置 **频道 ID / 显示名称 / 排序 / 可见性**，配置全部保存在 **KV**
 - **未登录访客看不到指定频道**（服务端 403，不只是前端隐藏）
 - **媒体模式**：视频 / 图片 / 音频 / 文件四类分类浏览，视频使用**浏览器原生播放器**播放，支持新窗口交给系统默认播放器
+- **多语言**：界面默认简体中文，顶栏语言按钮可切换 English（词条集中在各文件的 `reg()` 注册段，见 `public/i18n.js`）
 - **信息流**：全频道聚合，**按发布时间倒序**展示
 - **下载**：图片 / 视频 / 音频 / 文件在消息卡片、媒体模式卡片和大图查看器里都有「下载」按钮，跨域地址由代理下发 `Content-Disposition: attachment`（带正确文件名）
 - **RSS 订阅**：`/rss.xml` 聚合订阅、`/api/rss?channel=<key>` 单频道订阅，任意 RSS 客户端可用

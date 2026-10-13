@@ -2,13 +2,33 @@
 
 import { api } from "./api.js";
 import { el, clear, toast, openLightbox, createMoreControls, fmtDate, downloadBtn } from "./ui.js";
+import { t, reg } from "./i18n.js";
 
-const TABS = [
-  { key: "video", label: "视频" },
-  { key: "image", label: "图片" },
-  { key: "audio", label: "音频" },
-  { key: "file", label: "文件" },
-];
+reg("media", {
+  tabVideo: { zh: "视频", en: "Videos" },
+  tabImage: { zh: "图片", en: "Images" },
+  tabAudio: { zh: "音频", en: "Audio" },
+  tabFile: { zh: "文件", en: "Files" },
+  title: { zh: "媒体模式", en: "Media" },
+  sub: { zh: "按视频 / 图片 / 音频 / 文件分类浏览所有可见频道", en: "Browse all visible channels by video / image / audio / file" },
+  tabClosed: { zh: "{label}（已关闭）", en: "{label} (disabled)" },
+  allChannels: { zh: "全部频道", en: "All channels" },
+  typeClosed: { zh: "{label}分类已关闭", en: "{label} category is disabled" },
+  openMediaHint: { zh: "可在「管理 → 媒体」中开启", en: "Enable it in “Admin → Media”" },
+  loading: { zh: "加载中…", en: "Loading…" },
+  noMore: { zh: "没有更多了", en: "No more items" },
+  noMedia: { zh: "暂无该类型的媒体", en: "No media of this type" },
+  loadMore: { zh: "加载更多", en: "Load more" },
+  loadFailed: { zh: "加载失败", en: "Load failed" },
+  retry: { zh: "重试", en: "Retry" },
+  noFileLink: { zh: "该文件没有可用链接", en: "No available link for this file" },
+});
+
+const TAB_KEYS = ["video", "image", "audio", "file"];
+
+function tabLabel(key) {
+  return t(`media.tab${key[0].toUpperCase()}${key.slice(1)}`);
+}
 
 export async function renderMedia(root, ctx, type = "video", channelKey = "") {
   const cfg = ctx.state.config?.media || {};
@@ -18,19 +38,20 @@ export async function renderMedia(root, ctx, type = "video", channelKey = "") {
   root.append(
     el("div", { class: "view-head" }, [
       el("div", {}, [
-        el("h1", { text: "媒体模式" }),
-        el("div", { class: "sub", text: "按视频 / 图片 / 音频 / 文件分类浏览所有可见频道" }),
+        el("h1", { text: t("media.title") }),
+        el("div", { class: "sub", text: t("media.sub") }),
       ]),
     ]),
   );
 
   const tabs = el("div", { class: "tabs" });
-  TABS.forEach((tab) => {
-    const disabled = cfg[tab.key] === false;
+  TAB_KEYS.forEach((key) => {
+    const disabled = cfg[key] === false;
+    const label = tabLabel(key);
     const link = el("a", {
-      href: `#/media/${tab.key}${channelKey ? `/${encodeURIComponent(channelKey)}` : ""}`,
-      text: disabled ? `${tab.label}（已关闭）` : tab.label,
-      class: tab.key === type ? "active" : "",
+      href: `#/media/${key}${channelKey ? `/${encodeURIComponent(channelKey)}` : ""}`,
+      text: disabled ? t("media.tabClosed", { label }) : label,
+      class: key === type ? "active" : "",
     });
     tabs.append(link);
   });
@@ -40,7 +61,7 @@ export async function renderMedia(root, ctx, type = "video", channelKey = "") {
   const channels = ctx.state.channels || [];
   const filterBar = el("div", { style: { display: "flex", gap: "10px", marginBottom: "14px", flexWrap: "wrap" } });
   const select = el("select", { class: "select", style: { maxWidth: "260px" } });
-  select.append(el("option", { value: "", text: "全部频道" }));
+  select.append(el("option", { value: "", text: t("media.allChannels") }));
   channels.forEach((c) => {
     const opt = el("option", { value: c.key, text: c.name });
     if (c.key === channelKey) opt.selected = true;
@@ -56,8 +77,8 @@ export async function renderMedia(root, ctx, type = "video", channelKey = "") {
   if (cfg[type] === false) {
     root.append(
       el("div", { class: "empty" }, [
-        el("div", { text: `${TABS.find((t) => t.key === type)?.label || type}分类已关闭` }),
-        el("div", { class: "hint", text: "可在「管理 → 媒体」中开启" }),
+        el("div", { text: t("media.typeClosed", { label: tabLabel(type) || type }) }),
+        el("div", { class: "hint", text: t("media.openMediaHint") }),
       ]),
     );
     return;
@@ -77,7 +98,7 @@ export async function renderMedia(root, ctx, type = "video", channelKey = "") {
   async function load() {
     if (loading || finished) return;
     loading = true;
-    more.setState({ disabled: true, label: "加载中…" });
+    more.setState({ disabled: true, label: t("media.loading") });
     try {
       const data = await api.media({ type, cursors, key: channelKey || undefined });
       cursors = data.cursors || {};
@@ -96,16 +117,16 @@ export async function renderMedia(root, ctx, type = "video", channelKey = "") {
       if (finished) {
         clear(footer).append(
           el("div", { class: "muted", style: { textAlign: "center", padding: "14px" },
-            text: grid.children.length ? "没有更多了" : "暂无该类型的媒体" }),
+            text: grid.children.length ? t("media.noMore") : t("media.noMedia") }),
         );
       } else {
         more.mount(footer);
-        more.setState({ disabled: false, label: "加载更多" });
+        more.setState({ disabled: false, label: t("media.loadMore") });
       }
     } catch (err) {
-      toast(err.message || "加载失败", "error");
+      toast(err.message || t("media.loadFailed"), "error");
       more.mount(footer);
-      more.setState({ disabled: false, label: "重试" });
+      more.setState({ disabled: false, label: t("media.retry") });
     } finally {
       loading = false;
     }
@@ -159,7 +180,7 @@ function activate(item, type) {
     } else if (item.link || item.post?.url) {
       window.open(item.link || item.post.url, "_blank", "noopener");
     } else {
-      toast("该文件没有可用链接", "error");
+      toast(t("media.noFileLink"), "error");
     }
     return;
   }

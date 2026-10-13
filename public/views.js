@@ -2,6 +2,32 @@
 
 import { api } from "./api.js";
 import { el, clear, renderPost, createMoreControls, toast, avatarNode } from "./ui.js";
+import { t, reg } from "./i18n.js";
+
+reg("views", {
+  all: { zh: "全部", en: "All" },
+  feedSub: { zh: "聚合信息流 · 按发布时间倒序", en: "Aggregated feed · newest first" },
+  loading: { zh: "加载中…", en: "Loading…" },
+  noMore: { zh: "没有更多了", en: "No more items" },
+  loadMore: { zh: "加载更多", en: "Load more" },
+  noTagContentFeed: { zh: "没有带 #{tag} 的已加载内容", en: "No loaded items tagged #{tag}" },
+  tryClearFilter: { zh: "试试点「全部」取消筛选，或加载更多", en: "Try clearing the filter with “All”, or load more" },
+  clearFilter: { zh: "清除筛选", en: "Clear filter" },
+  empty: { zh: "还没有内容", en: "No content yet" },
+  goAdminHint: { zh: "前往「管理 → 频道」添加 Telegram 频道", en: "Go to “Admin → Channels” to add Telegram channels" },
+  goConfig: { zh: "去配置", en: "Configure" },
+  loadFailed: { zh: "加载失败", en: "Load failed" },
+  retry: { zh: "重试", en: "Retry" },
+  channelMissing: { zh: "频道不存在", en: "Channel not found" },
+  channelHiddenHint: { zh: "可能被设为「隐藏」且当前未登录", en: "It may be hidden and you are not logged in" },
+  backHome: { zh: "返回首页", en: "Back to home" },
+  privateChannel: { zh: "{sep}私密频道 {tgId}", en: "{sep}Private channel {tgId}" },
+  loginOnly: { zh: "仅登录可见", en: "Visible after login" },
+  reachedEnd: { zh: "到底了", en: "You've reached the end" },
+  noTagContentChannel: { zh: "该频道没有带 #{tag} 的内容", en: "This channel has no content tagged #{tag}" },
+  channelEmpty: { zh: "该频道暂无可显示的内容", en: "No content to show in this channel" },
+  goLogin: { zh: "去登录", en: "Log in" },
+});
 
 function dedupe() {
   const seen = new Set();
@@ -41,7 +67,7 @@ function createTagBar({ bar, ctx, tagSet, activeTag, setTag }) {
     if (!bar.isConnected) return;
     clear(bar);
     const list = [...tagSet.values()].sort((a, b) => a.localeCompare(b));
-    if (activeTag && !list.some((t) => t.toLowerCase() === activeTag.toLowerCase())) list.unshift(activeTag);
+    if (activeTag && !list.some((tagName) => tagName.toLowerCase() === activeTag.toLowerCase())) list.unshift(activeTag);
     const hasAny = list.length > 0 || !!activeTag;
     const open = !!ctx.state.tagsOpen;
     ctx.updateTagToggle(hasAny, open);
@@ -58,7 +84,7 @@ function createTagBar({ bar, ctx, tagSet, activeTag, setTag }) {
       return;
     }
     bar.hidden = false;
-    bar.append(chip("全部", !activeTag, () => setTag(null)));
+    bar.append(chip(t("views.all"), !activeTag, () => setTag(null)));
     for (const tag of list) {
       const active = activeTag && activeTag.toLowerCase() === tag.toLowerCase();
       bar.append(chip(`#${tag}`, active, () => setTag(active ? null : tag)));
@@ -73,7 +99,7 @@ export async function renderFeed(root, ctx) {
   const head = el("div", { class: "view-head" }, [
     el("div", {}, [
       el("h1", { text: ctx.state.config?.siteTitle || "TG-RSS" }),
-      el("div", { class: "sub", text: "聚合信息流 · 按发布时间倒序" }),
+      el("div", { class: "sub", text: t("views.feedSub") }),
     ]),
   ]);
   root.append(head);
@@ -115,7 +141,7 @@ export async function renderFeed(root, ctx) {
   async function load() {
     if (loading || finished) return;
     loading = true;
-    more.setState({ disabled: true, label: "加载中…" });
+    more.setState({ disabled: true, label: t("views.loading") });
     try {
       const data = await api.feed(cursors, activeTag);
       cursors = data.cursors || {};
@@ -124,7 +150,7 @@ export async function renderFeed(root, ctx) {
       (data.posts || []).forEach((p) => {
         const post = withChannelMeta(p, channelMap);
         if (!accept(post)) return;
-        (post.tags || []).forEach((t) => tagSet.set(String(t).toLowerCase(), t));
+        (post.tags || []).forEach((tagName) => tagSet.set(String(tagName).toLowerCase(), tagName));
         const node = renderPost(post, ctx);
         posts.append(node);
         entries.push({ t: Date.parse(post.date) || 0, node });
@@ -138,34 +164,34 @@ export async function renderFeed(root, ctx) {
       if (!hasPending || (added === 0 && data.done)) finished = true;
       if (finished) {
         clear(footer);
-        footer.append(el("div", { class: "muted", style: { textAlign: "center", padding: "14px" }, text: "没有更多了" }));
+        footer.append(el("div", { class: "muted", style: { textAlign: "center", padding: "14px" }, text: t("views.noMore") }));
       } else {
         more.mount(footer);
-        more.setState({ disabled: false, label: "加载更多" });
+        more.setState({ disabled: false, label: t("views.loadMore") });
       }
       if (!posts.children.length && finished) {
         if (activeTag) {
           clear(root).append(
             el("div", { class: "empty" }, [
-              el("div", { text: `没有带 #${activeTag} 的已加载内容` }),
-              el("div", { class: "hint", text: "试试点「全部」取消筛选，或加载更多" }),
-              el("p", {}, [el("button", { class: "btn", type: "button", text: "清除筛选", onclick: () => setTag(null) })]),
+              el("div", { text: t("views.noTagContentFeed", { tag: activeTag }) }),
+              el("div", { class: "hint", text: t("views.tryClearFilter") }),
+              el("p", {}, [el("button", { class: "btn", type: "button", text: t("views.clearFilter"), onclick: () => setTag(null) })]),
             ]),
           );
         } else {
           clear(root).append(
             el("div", { class: "empty" }, [
-              el("div", { text: "还没有内容" }),
-              el("div", { class: "hint", text: "前往「管理 → 频道」添加 Telegram 频道" }),
-              el("p", {}, [el("a", { class: "btn primary", href: "#/admin", text: "去配置" })]),
+              el("div", { text: t("views.empty") }),
+              el("div", { class: "hint", text: t("views.goAdminHint") }),
+              el("p", {}, [el("a", { class: "btn primary", href: "#/admin", text: t("views.goConfig") })]),
             ]),
           );
         }
       }
     } catch (err) {
-      toast(err.message || "加载失败", "error");
+      toast(err.message || t("views.loadFailed"), "error");
       more.mount(footer);
-      more.setState({ disabled: false, label: "重试" });
+      more.setState({ disabled: false, label: t("views.retry") });
     } finally {
       loading = false;
     }
@@ -189,9 +215,9 @@ export async function renderChannel(root, ctx, key) {
   if (!channel) {
     root.append(
       el("div", { class: "errorbox" }, [
-        el("div", { text: "频道不存在" }),
-        el("div", { class: "hint", text: "可能被设为「隐藏」且当前未登录" }),
-        el("p", {}, [el("a", { class: "btn", href: "#/", text: "返回首页" })]),
+        el("div", { text: t("views.channelMissing") }),
+        el("div", { class: "hint", text: t("views.channelHiddenHint") }),
+        el("p", {}, [el("a", { class: "btn", href: "#/", text: t("views.backHome") })]),
       ]),
     );
     return;
@@ -203,8 +229,8 @@ export async function renderChannel(root, ctx, key) {
       el("h1", { text: channel.name }),
       el("div", { class: "sub" }, [
         channel.username ? el("a", { href: `https://t.me/${channel.username}`, target: "_blank", rel: "noopener", text: `@${channel.username}` }) : null,
-        channel.type === "private" ? el("span", { text: `${channel.username ? " · " : ""}私密频道 ${channel.tgId || ""}` }) : null,
-        channel.hidden ? el("span", { class: "pill warn", style: { marginLeft: "8px" }, text: "仅登录可见" }) : null,
+        channel.type === "private" ? el("span", { text: t("views.privateChannel", { sep: channel.username ? " · " : "", tgId: channel.tgId || "" }) }) : null,
+        channel.hidden ? el("span", { class: "pill warn", style: { marginLeft: "8px" }, text: t("views.loginOnly") }) : null,
       ].filter(Boolean)),
       channel.description ? el("div", { class: "desc", text: channel.description }) : null,
       countersRow(channel.counters),
@@ -240,7 +266,7 @@ export async function renderChannel(root, ctx, key) {
   async function load() {
     if (loading || finished) return;
     loading = true;
-    more.setState({ disabled: true, label: "加载中…" });
+    more.setState({ disabled: true, label: t("views.loading") });
     try {
       const data = await api.posts(key, before, activeTag);
       before = data.next;
@@ -248,7 +274,7 @@ export async function renderChannel(root, ctx, key) {
       (data.posts || []).forEach((p) => {
         const post = withChannelMeta({ ...p, channelKey: key, channelName: channel.name }, { [key]: channel });
         if (!accept(post)) return;
-        (post.tags || []).forEach((t) => tagSet.set(String(t).toLowerCase(), t));
+        (post.tags || []).forEach((tagName) => tagSet.set(String(tagName).toLowerCase(), tagName));
         posts.append(renderPost(post, ctx));
         added += 1;
       });
@@ -259,21 +285,21 @@ export async function renderChannel(root, ctx, key) {
       if (!before) finished = true;
 
       if (finished) {
-        clear(footer).append(el("div", { class: "muted", style: { textAlign: "center", padding: "14px" }, text: "到底了" }));
+        clear(footer).append(el("div", { class: "muted", style: { textAlign: "center", padding: "14px" }, text: t("views.reachedEnd") }));
       } else {
         more.mount(footer);
-        more.setState({ disabled: false, label: "加载更多" });
+        more.setState({ disabled: false, label: t("views.loadMore") });
       }
       if (!posts.children.length && finished) {
         if (activeTag) {
           clear(root).append(
             el("div", { class: "empty" }, [
-              el("div", { text: `该频道没有带 #${activeTag} 的内容` }),
-              el("p", {}, [el("button", { class: "btn", type: "button", text: "清除筛选", onclick: () => setTag(null) })]),
+              el("div", { text: t("views.noTagContentChannel", { tag: activeTag }) }),
+              el("p", {}, [el("button", { class: "btn", type: "button", text: t("views.clearFilter"), onclick: () => setTag(null) })]),
             ]),
           );
         } else {
-          clear(root).append(el("div", { class: "empty", text: "该频道暂无可显示的内容" }));
+          clear(root).append(el("div", { class: "empty", text: t("views.channelEmpty") }));
         }
       }
     } catch (err) {
@@ -281,14 +307,14 @@ export async function renderChannel(root, ctx, key) {
         clear(root).append(
           el("div", { class: "errorbox" }, [
             el("div", { text: err.message }),
-            el("p", {}, [el("a", { class: "btn primary", href: "#/admin", text: "去登录" })]),
+            el("p", {}, [el("a", { class: "btn primary", href: "#/admin", text: t("views.goLogin") })]),
           ]),
         );
         return;
       }
-      toast(err.message || "加载失败", "error");
+      toast(err.message || t("views.loadFailed"), "error");
       more.mount(footer);
-      more.setState({ disabled: false, label: "重试" });
+      more.setState({ disabled: false, label: t("views.retry") });
     } finally {
       loading = false;
     }

@@ -1,5 +1,12 @@
 /** 前端 API 封装：统一错误处理与 JSON 序列化 */
 
+import { t, reg } from "./i18n.js";
+
+reg("api", {
+  networkError: { zh: "网络错误：{msg}", en: "Network error: {msg}" },
+  errWithCode: { zh: "请求失败（HTTP {code}）", en: "Request failed (HTTP {code})" },
+});
+
 export class ApiError extends Error {
   constructor(message, status, code) {
     super(message);
@@ -26,14 +33,14 @@ async function request(path, options = {}) {
   try {
     res = await fetch(path, init);
   } catch (err) {
-    throw new ApiError(`网络错误：${err?.message || err}`, 0, "network_error");
+    throw new ApiError(t("api.networkError", { msg: err?.message || err }), 0, "network_error");
   }
 
   const isJson = (res.headers.get("content-type") || "").includes("json");
   const data = isJson ? await res.json().catch(() => null) : null;
 
   if (!res.ok) {
-    const message = data?.error || `请求失败（HTTP ${res.status}）`;
+    const message = data?.error || t("api.errWithCode", { code: res.status });
     const error = new ApiError(message, res.status, data?.code);
     error.retryAfter = res.headers.get("retry-after");
     throw error;
