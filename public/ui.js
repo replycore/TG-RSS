@@ -83,9 +83,9 @@ export function toast(message, type = "") {
 
 export function fmtDate(value) {
   if (!value) return "";
-  const t = Date.parse(value);
-  if (Number.isNaN(t)) return "";
-  const diff = Date.now() - t;
+  const ts = Date.parse(value); // 局部时间戳禁用 t 作变量名——会遮蔽 i18n 的 t()
+  if (Number.isNaN(ts)) return "";
+  const diff = Date.now() - ts;
   const minute = 60 * 1000;
   const hour = 60 * minute;
   const day = 24 * hour;
@@ -93,7 +93,7 @@ export function fmtDate(value) {
   if (diff < hour) return t("ui.minutesAgo", { n: Math.floor(diff / minute) });
   if (diff < day) return t("ui.hoursAgo", { n: Math.floor(diff / hour) });
   if (diff < 7 * day) return t("ui.daysAgo", { n: Math.floor(diff / day) });
-  const d = new Date(t);
+  const d = new Date(ts);
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }

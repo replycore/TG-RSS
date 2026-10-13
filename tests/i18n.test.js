@@ -64,3 +64,30 @@ test("i18n：index.html 静态节点全标记 + 语言按钮存在", () => {
   // 中文原文保留（首屏/测试断言用）
   assert.ok(html.includes("信息流") && html.includes("媒体"), "中文原文被删？");
 });
+
+test("i18n：fmtDate 直接可调（线上事故回归：局部 const t 遮蔽 i18n 的 t）", async (tctx) => {
+  // 事故：ui.js fmtDate 内 `const t = Date.parse(value)` 遮蔽 i18n 的 t()
+  // → 渲染帖子时间抛 "t is not a function"，整个信息流打不开
+  const { Window } = await import("happy-dom");
+  const window = new Window({ url: "http://localhost/" });
+  globalThis.window = window; globalThis.document = window.document;
+  globalThis.localStorage = window.localStorage;
+  tctx.after(() => { delete globalThis.window; delete globalThis.document; delete globalThis.localStorage; });
+  const { fmtDate } = await import(`../public/ui.js?regress=${Date.now()}`);
+  assert.equal(typeof fmtDate(new Date().toISOString()), "string", "fmtDate 应返回字符串");
+  assert.ok(fmtDate(new Date(Date.now() - 5 * 60000).toISOString()).includes("分钟前"), "中文时间文案");
+  assert.ok(fmtDate("2026-01-05T10:00:00Z").length > 0, "远日期格式化");
+  assert.equal(fmtDate(""), "", "空值容错");
+});
+
+test("i18n：前端文件禁止用 t 作局部变量/形参名（遮蔽静态审计）", () => {
+  const files = ["app.js", "api.js", "route.js", "views.js", "media.js", "ui.js", "admin.js"];
+  const re = /(?:\b(?:const|let|var)\s+t\b|\(\s*t\s*[,)]|\bfor\s*\(\s*const\s+t\b|\bcatch\s*\(\s*t\b)/;
+  for (const f of files) {
+    const src = fs.readFileSync(new URL(`../public/${f}`, import.meta.url), "utf8");
+    const bad = src.split("\n")
+      .map((line, i) => [i + 1, line])
+      .filter(([, line]) => re.test(line) && !/^\s*(?:\/\/|\*|\/\*)/.test(line));
+    assert.deepEqual(bad, [], `${f} 存在 t 遮蔽风险行: ${bad.map(([i]) => i).join(",")}`);
+  }
+});
