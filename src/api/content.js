@@ -262,7 +262,7 @@ export async function getFeed(request, env, ctx, url, authenticated) {
         // 统一走补页循环：仅媒体频道只投媒体帖；广告帖任何频道都不投（loadChannelPage 已过滤）
         const page = await loadFilledChannelPage(env, ctx, ch, before, general.pageSize || 20, budget);
         nextCursors[ch.key] = page.next ? String(page.next) : null;
-        perChannel.push({ channel: page.info, posts: page.posts });
+        perChannel.push({ channel: page.info, posts: page.posts, cacheStatus: page.cacheStatus || null });
       } catch (err) {
         nextCursors[ch.key] = null; // 出错的频道本次不再重试，避免整页失败
         perChannel.push({ channel: { key: ch.key, name: ch.name }, posts: [], error: err?.message || "fetch_failed" });
@@ -318,12 +318,15 @@ export async function getFeed(request, env, ctx, url, authenticated) {
   // 前端的 hasPending 判断必须忽略它（见 views.js / media.js），否则"没有更多了"永远出不来
   if (batch.length) nextCursors.__lastBatchTail = batch[batch.length - 1].key;
 
+  // N-2 调试标聚合：本轮各频道上游缓存状态（HIT/MISS/BYPASS 去重集合）
+  const upStatuses = new Set(perChannel.filter((e) => !e.error && e.cacheStatus).map((e) => e.cacheStatus));
   return {
     posts: kept,
     cursors: nextCursors,
     channels: perChannel.map((e) => e.channel),
     errors: perChannel.filter((e) => e.error).map((e) => ({ key: e.channel.key, message: e.error })),
     done: batch.length === 0,
+    _up: [...upStatuses].sort(),
   };
 }
 
