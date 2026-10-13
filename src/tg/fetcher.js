@@ -180,7 +180,12 @@ export async function fetchBridgeFeed(env, channel, before = null, limit = 20) {
   // 双向校验（反向）：确认对端确实持有 token —— 挡住伪造的 bridge 返回假数据
   const verified = await verifyBridgeResponse(bridge, res, "GET", url.pathname + url.search);
   if (!verified.ok) {
-    throw new HttpError(502, `桥接服务响应未通过签名校验（${verified.reason}）：请更新 bridge 到最新版并确认两端 token 一致`, "bridge_unverified");
+    // stale = bridge 机器时钟与 Worker 偏差超窗：真正解法是 NTP 对时，
+    // 与「更新 bridge / 检查 token」无关，单独指引（对齐 v1.2.6 请求方向的 NTP 提示）
+    const hint = verified.reason === "stale" && Number.isFinite(verified.bridgeTime)
+      ? `（bridge 响应时间与本机差约 ${verified.bridgeTime - Math.floor(Date.now() / 1000)}s，超出签名时间窗 ±${verified.windowSec}s：检查桥接机器 NTP 对时）`
+      : "：请更新 bridge 到最新版并确认两端 token 一致";
+    throw new HttpError(502, `桥接服务响应未通过签名校验（${verified.reason}）${hint}`, "bridge_unverified");
   }
 
   const data = await res.json();

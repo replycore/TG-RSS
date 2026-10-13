@@ -220,3 +220,23 @@ test("serveFile：200/206/416 响应均带可验的签名头", async () => {
     config.signWindowSec = prevWindow;
   }
 });
+
+test("响应验签 stale 时带 bridgeTime 与 windowSec（供 NTP 指引）", async () => {
+  const { responseSignatureHeaders } = await import("../bridge/auth.js");
+  const { verifyBridgeResponse } = await import("../src/bridge-sign.js");
+  const token = "stale-test-token";
+  const path = "/feed?channel=-1001";
+  // 构造一个签名本身合法但时间戳过旧的响应
+  const oldTs = String(Math.floor(Date.now() / 1000) - 9999);
+  // 手动拼旧时间戳的签名（载荷格式与 bridge/auth.js 的 responseSignatureHeaders 一致）
+  const crypto = await import("node:crypto");
+  const sig = crypto.createHmac("sha256", token).update(`${oldTs}\n200\nGET\n${path}`).digest("base64");
+  const r = await verifyBridgeResponse({ token }, new Response("{}", {
+    status: 200,
+    headers: { "x-bridge-timestamp": oldTs, "x-bridge-signature": sig, "x-bridge-window-sec": "600" },
+  }), "GET", path);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "stale");
+  assert.ok(Number.isFinite(r.bridgeTime), "应带回 bridge 时间戳供 drift 计算");
+  assert.equal(r.windowSec, 600, "应带回判定用的窗口（max(300,600)）");
+});

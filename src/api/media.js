@@ -390,7 +390,11 @@ export async function proxyMedia(request, env, ctx, url) {
     const verified = await verifyBridgeResponse(bridge, res, "GET", new URL(currentUrl).pathname + new URL(currentUrl).search);
     if (!verified.ok) {
       if (res.body && typeof res.body.cancel === "function") await res.body.cancel().catch(() => {});
-      throw new HttpError(502, `桥接媒体未通过签名校验（${verified.reason}）：请更新 bridge 到最新版并确认两端 token 一致`, "bridge_unverified");
+      // stale 是时钟差问题（NTP），不是版本/token 问题，单独指引
+      const hint = verified.reason === "stale" && Number.isFinite(verified.bridgeTime)
+        ? `（bridge 响应时间与本机差约 ${verified.bridgeTime - Math.floor(Date.now() / 1000)}s，超出签名时间窗 ±${verified.windowSec}s：检查桥接机器 NTP 对时）`
+        : "：请更新 bridge 到最新版并确认两端 token 一致";
+      throw new HttpError(502, `桥接媒体未通过签名校验（${verified.reason}）${hint}`, "bridge_unverified");
     }
   }
 

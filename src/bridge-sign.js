@@ -30,7 +30,11 @@ export async function verifyBridgeResponse(bridge, res, method, pathWithQuery) {
   // 策略：默认 300s；bridge 可通过 x-bridge-window-sec 头自报真实窗口，取两者较大值。
   const declared = Number(res.headers.get("x-bridge-window-sec"));
   const windowSec = Math.max(BRIDGE_SIGN_WINDOW_SEC, Number.isFinite(declared) && declared > 0 ? declared : 0);
-  if (!Number.isFinite(tsNum) || Math.abs(now - tsNum) > windowSec) return { ok: false, reason: "stale" };
+  // 把 bridge 时间戳带回来：stale 时调用方可算 drift（= bridge 时钟 - 本机时钟），给 NTP 指引
+  const out = { bridgeTime: tsNum, windowSec };
+  if (!Number.isFinite(tsNum) || Math.abs(now - tsNum) > windowSec) {
+    return { ok: false, reason: "stale", ...out };
+  }
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey("raw", enc.encode(token), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const payload = `${ts}\n${res.status}\n${String(method).toUpperCase()}\n${pathWithQuery}`;
