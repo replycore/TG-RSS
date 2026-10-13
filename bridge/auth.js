@@ -82,13 +82,16 @@ function hmacB64(token, payload) {
  * 不签 body：媒体走 Range 流式传输，签 body 需整包缓冲（几百 MB）。
  * 时间窗 + 路径/状态绑定已足够：改内容不改状态码无法得到新签名。
  */
-export function responseSignatureHeaders({ token, status, method, pathWithQuery }) {
+export function responseSignatureHeaders({ token, status, method, pathWithQuery, windowSec }) {
   if (!token) return {};
   const ts = String(Math.floor(Date.now() / 1000));
   const payload = `${ts}\n${status}\n${String(method || "GET").toUpperCase()}\n${pathWithQuery}`;
   return {
     "x-bridge-timestamp": ts,
     "x-bridge-signature": hmacB64(token, payload),
+    // 自报签名窗口，TG-RSS 响应验签按 max(自身默认, 本值) 判定——
+    // 否则 bridge 配了大窗口 + 时钟差较大时，响应方向会误判超时（v1.2.6 请求方向同类问题的对称修复）
+    ...(Number(windowSec) > 0 ? { "x-bridge-window-sec": String(Math.floor(windowSec)) } : {}),
   };
 }
 

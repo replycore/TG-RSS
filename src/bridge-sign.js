@@ -25,7 +25,11 @@ export async function verifyBridgeResponse(bridge, res, method, pathWithQuery) {
   if (!ts || !sig) return { ok: false, reason: "unsigned" };
   const tsNum = Number(ts);
   const now = Math.floor(Date.now() / 1000);
-  const windowSec = BRIDGE_SIGN_WINDOW_SEC;
+  // 窗口对称（v1.2.6 在请求方向修过同类问题）：bridge 侧窗口可配 60~3600，
+  // 这里写死 300 会在「大窗口 + 较大时钟差」时误报（请求能过、响应过不了）。
+  // 策略：默认 300s；bridge 可通过 x-bridge-window-sec 头自报真实窗口，取两者较大值。
+  const declared = Number(res.headers.get("x-bridge-window-sec"));
+  const windowSec = Math.max(BRIDGE_SIGN_WINDOW_SEC, Number.isFinite(declared) && declared > 0 ? declared : 0);
   if (!Number.isFinite(tsNum) || Math.abs(now - tsNum) > windowSec) return { ok: false, reason: "stale" };
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey("raw", enc.encode(token), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);

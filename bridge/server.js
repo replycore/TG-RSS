@@ -15,6 +15,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { config, requireConfig, baseUrl } from "./config.js";
 import { resolvePeer, fetchMessages, getMessageById, downloadMediaToCache, downloadAvatarToCache, downloadThumbToCache, getMe, disconnect } from "./client.js";
 import { messageToPost, peerInfo, pickVideoThumb } from "./post.js";
@@ -48,17 +49,25 @@ function signedHeaders(req, url, status) {
     status,
     method: req.method,
     pathWithQuery: url.pathname + url.search,
+    windowSec: config.signWindowSec,
   });
+}
+
+/**
+ * 取该响应的 bridge 签名头（res.__signedHeaders 由请求入口在鉴权前挂载）。
+ * 必须定义在这里：serveFile 的 200/206/416 三个分支都依赖它。
+ */
+function sig(res, status) {
+  return res.__signedHeaders ? res.__signedHeaders(status) : {};
 }
 
 function sendJson(res, status, data) {
   const body = JSON.stringify(data);
-  const extra = res.__signedHeaders ? res.__signedHeaders(status) : {};
-  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...extra });
+  res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...sig(res, status) });
   res.end(body);
 }
 
-function serveFile(req, res, file) {
+export function serveFile(req, res, file) {
   if (!file || !fs.existsSync(file)) {
     sendJson(res, 404, { error: "file_not_found" });
     return;
@@ -90,6 +99,9 @@ function serveFile(req, res, file) {
         ...baseHeaders,
         "content-range": `bytes ${start}-${end}/${stat.size}`,
         "content-length": end - start + 1,
+        // 206 也要签名：Worker 侧 proxyMedia 透传 Range，res.ok 覆盖 206 → 会走验签分支。
+        // 状态码参与签名 payload，206 与 200 的签名互不通用（防状态码篡改）
+        ...sig(res, 206),
       });
       const stream = fs.createReadStream(file, { start, end });
       stream.on("error", () => res.destroy());
@@ -243,7 +255,10 @@ async function main() {
   process.on("SIGTERM", shutdown);
 }
 
-main().catch((err) => {
-  console.error("启动失败：", err.message || err);
-  process.exit(1);
-});
+// 仅直接运行时启动（node server.js）；被 import 时（如测试 serveFile 的签名头）不启动
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error("启动失败：", err.message || err);
+    process.exit(1);
+  });
+}

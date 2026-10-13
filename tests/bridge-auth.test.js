@@ -150,3 +150,73 @@ test("响应签名：bridge 签 → TG-RSS 验，真实往返", async () => {
   assert.equal(r7.ok, false, "过窗应拒绝");
   assert.equal(r7.reason, "stale");
 });
+
+// serveFile 回归：200/206/416 三种响应都必须带合法签名头
+// （此前 sig() 未定义 → 全部媒体 500；206 漏签 → Range 播放全 502）
+test("serveFile：200/206/416 响应均带可验的签名头", async () => {
+  const http = await import("node:http");
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { serveFile } = await import("../bridge/server.js");
+  const { responseSignatureHeaders } = await import("../bridge/auth.js");
+  const { verifyBridgeResponse } = await import("../src/bridge-sign.js");
+  const { config } = await import("../bridge/config.js");
+
+  const token = "serve-file-test-token-abcdef";
+  const prevToken = config.token;
+  const prevWindow = config.signWindowSec;
+  config.token = token;
+  config.signWindowSec = 600;
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tgserve-"));
+  const file = path.join(dir, "v.mp4");
+  fs.writeFileSync(file, Buffer.alloc(4096, 7));
+
+  const srv = http.createServer((req, res) => {
+    const url = new URL(req.url, "http://localhost");
+    res.__signedHeaders = (status) => responseSignatureHeaders({
+      token: config.token, status, method: req.method, pathWithQuery: url.pathname + url.search,
+      windowSec: config.signWindowSec,
+    });
+    serveFile(req, res, file);
+  });
+  await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+  const port = srv.address().port;
+  const hit = async (range) => {
+    const headers = range ? { range } : {};
+    const r = await fetch(`http://127.0.0.1:${port}/media?ch=-1001&m=7`, { headers });
+    return { status: r.status, ts: r.headers.get("x-bridge-timestamp"), sig: r.headers.get("x-bridge-signature"), win: r.headers.get("x-bridge-window-sec"), body: await r.arrayBuffer() };
+  };
+
+  try {
+    const full = await hit(null);
+    assert.equal(full.status, 200, "整文件应 200");
+    assert.ok(full.sig, "200 响应必须有签名头");
+    const v1 = await verifyBridgeResponse({ token }, new Response("{}", { status: 200, headers: { "x-bridge-timestamp": full.ts, "x-bridge-signature": full.sig, "x-bridge-window-sec": full.win } }), "GET", "/media?ch=-1001&m=7");
+    assert.equal(v1.ok, true, `200 签名应验签通过：${JSON.stringify(v1)}`);
+
+    const part = await hit("bytes=0-99");
+    assert.equal(part.status, 206, "Range 应 206");
+    assert.ok(part.sig, "206 响应必须有签名头（此前漏签 → Range 播放全 502）");
+    const v2 = await verifyBridgeResponse({ token }, new Response("{}", { status: 206, headers: { "x-bridge-timestamp": part.ts, "x-bridge-signature": part.sig } }), "GET", "/media?ch=-1001&m=7");
+    assert.equal(v2.ok, true, `206 签名应验签通过：${JSON.stringify(v2)}`);
+    // 状态码参与签名：206 的签名不能当 200 用
+    const v3 = await verifyBridgeResponse({ token }, new Response("{}", { status: 200, headers: { "x-bridge-timestamp": part.ts, "x-bridge-signature": part.sig } }), "GET", "/media?ch=-1001&m=7");
+    assert.equal(v3.ok, false, "206 签名不得用于 200（防状态码篡改）");
+
+    const bad = await hit("bytes=99999-100000");
+    assert.equal(bad.status, 416, "越界 Range 应 416");
+    assert.ok(bad.sig, "416 响应必须有签名头");
+    const v4 = await verifyBridgeResponse({ token }, new Response("{}", { status: 416, headers: { "x-bridge-timestamp": bad.ts, "x-bridge-signature": bad.sig } }), "GET", "/media?ch=-1001&m=7");
+    assert.equal(v4.ok, true, `416 签名应验签通过：${JSON.stringify(v4)}`);
+
+    // 自报窗口：bridge 配 600s，Worker 应按 max(300, 600) 判定
+    assert.equal(full.win, "600", "应自报签名窗口供对端对称判定");
+  } finally {
+    srv.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+    config.token = prevToken;
+    config.signWindowSec = prevWindow;
+  }
+});
