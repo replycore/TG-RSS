@@ -18,6 +18,8 @@ const { t, reg, getLang, setLang } = await import("../public/i18n.js?v=" + Date.
 
 test("i18n：默认 zh-CN，t() 取中文", () => {
   assert.equal(getLang(), "zh-CN");
+  // 初始化即同步 <html lang>（保存 en 的用户首载前 lang 也不能错）
+  assert.equal(document.documentElement.lang, "zh-CN", "初始化应同步 documentElement.lang");
   reg("probe", { hello: { zh: "你好", en: "Hello" } });
   assert.equal(t("probe.hello"), "你好");
   // 占位插值

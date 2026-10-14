@@ -71,7 +71,7 @@ npx wrangler deploy --config wrangler.deploy.jsonc
 
 | 分区 | 内容 |
 |---------|-------|
-| 站点 | 标题、每页条数、抓取缓存 TTL、信息流并发、主题 |
+| 站点 | 标题、每页条数、抓取缓存 TTL、每批频道数、主题 |
 | 频道 | 增删改、显示名、排序、连通性测试、元信息刷新、隐藏 / 仅媒体 / 启用开关 |
 | 媒体 | 四类开关、每页数量、全站走代理 |
 | 桥接 | 地址、令牌、启用、连通性测试 |
@@ -87,7 +87,7 @@ npx wrangler deploy --config wrangler.deploy.jsonc
 | `BRIDGE_TOKEN` | 是 | — | 与 TG-RSS 后台「私密频道桥接 → 访问令牌」保持一致 |
 | `PORT` | 否 | `8788` | 监听端口（默认 8788） |
 | `BRIDGE_HOST` | 否 | `127.0.0.1` | 监听地址（默认仅本机） |
-| `PUBLIC_URL` | 是 | `https://tg-bridge.example.com` | 公网 HTTPS 地址，供 Worker 访问 |
+| `PUBLIC_URL` | 否 | `https://tg-bridge.example.com` | 公网 HTTPS 地址，供 Worker 访问——仅桥接与 Worker 跨机部署时必填 |
 | `BRIDGE_SIGN_WINDOW_SEC` | 否 | `300` | HMAC 签名时间窗，60~3600（默认 300） |
 | `BRIDGE_ALLOWED_ORIGINS` | 否 | — | Origin 白名单，仅约束头认证请求 |
 
@@ -104,6 +104,8 @@ npm start              # 监听 8788，需公网 HTTPS（推荐 Cloudflare Tunne
 > ⚠️ **升级顺序：先升 bridge，再升 TG-RSS。** 双向不兼容且无开关可绕（新 TG-RSS 只发 HMAC 签名头，新 bridge 移除了 `?token=` 支持）。请安排在同一时段升级。详见 [PAGES.md](./PAGES.md#桥接bridge用户须知)。
 
 ### 桥接接口（`/health` 免鉴权，其余需 HMAC 签名头）
+
+> 旧版 `x-token` / `Bearer` 头仍兼容接受（供调试与旧客户端）。
 
 | 路径 | 说明 |
 | --- | --- |
@@ -165,7 +167,7 @@ GET  /api/admin/stats
 
 ```bash
 npm install          # 安装 wrangler 等依赖
-npm test             # 运行单测（155 项）
+npm test             # 运行单测
 npm run dev          # http://localhost:8787（wrangler dev，需要 workerd）
 npm run dev:node     # 同端口，纯 Node（tools/dev-server.mjs），不需要 workerd
 ```
@@ -196,9 +198,9 @@ npm run dev:node     # 同端口，纯 Node（tools/dev-server.mjs），不需�
 - 会话 Cookie：`HttpOnly + SameSite=Lax + Secure(HTTPS)`，服务端 TTL 校验
 - 密码：PBKDF2-SHA256 + 随机盐（10 万轮），定长比较
 - 登录限流：同 IP 5 分钟 8 次失败 → `429`
-- 媒体代理 SSRF 防护：仅放行 `telesco.pe / t.me / telegram.org / telegram-cdn.*` 与桥接自身域名，仅 `https`
+- 媒体代理 SSRF 防护：仅放行 `telesco.pe / t.me / telegram.org / telegram-cdn.org / telegram-cdn.net` 与桥接自身域名，仅 `https`（桥接自身域名可 `http`）
 - 消息 HTML 服务端白名单清洗：去 `script/style/iframe` 与全部事件属性，外链强制 `target=_blank rel=noopener`
-- 频道标识强校验：用户名 `^[A-Za-z0-9_]{4,64}$`，数字 ID `^-?\d{5,25}$`
+- 频道标识强校验：用户名 `^[A-Za-z0-9_]{4,64}$`，数字 ID `^-\d{5,25}$`
 
 ## 参与贡献
 

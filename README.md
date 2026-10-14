@@ -71,7 +71,7 @@ Set via `npx wrangler secret put <NAME>` (Worker) or project Settings → Variab
 
 | Section | Items |
 |---------|-------|
-| Site | title, page size, fetch cache TTL, feed concurrency, theme |
+| Site | title, page size, fetch cache TTL, feed channels per batch, theme |
 | Channels | add / edit / delete, display name, reorder, connectivity test, meta refresh, hidden / media-only / enabled switches |
 | Media | per-type toggles, page size, force-proxy-all |
 | Bridge | address, token, enabled, connectivity test |
@@ -87,7 +87,7 @@ Set via `npx wrangler secret put <NAME>` (Worker) or project Settings → Variab
 | `BRIDGE_TOKEN` | Yes | — | Must match the token in TG-RSS admin → Bridge |
 | `PORT` | No | `8788` | Listen port (default: 8788) |
 | `BRIDGE_HOST` | No | `127.0.0.1` | Listen address (default: localhost only) |
-| `PUBLIC_URL` | Yes | `https://tg-bridge.example.com` | Public HTTPS URL so the worker can reach it |
+| `PUBLIC_URL` | No | `https://tg-bridge.example.com` | Public HTTPS URL so the worker can reach it — required only when the bridge runs on a machine separate from the worker |
 | `BRIDGE_SIGN_WINDOW_SEC` | No | `300` | HMAC signature time window, 60–3600 (default: 300) |
 | `BRIDGE_ALLOWED_ORIGINS` | No | — | Origin allowlist, only constrains header-auth requests |
 
@@ -101,9 +101,11 @@ npm run login          # enter the Telegram code, writes TG_SESSION
 npm start              # listen on 8788, needs public HTTPS (Cloudflare Tunnel recommended)
 ```
 
-> ⚠️ **Upgrade order: bridge first, then TG-RSS.** Both directions are mutually incompatible with no bypass switch (new TG-RSS only sends HMAC signature headers, new bridge dropped `?token=` support). Upgrade both in the same window. See [PAGES.md](./PAGES.md#bridge-notes).
+> ⚠️ **Upgrade order: bridge first, then TG-RSS.** Both directions are mutually incompatible with no bypass switch (new TG-RSS only sends HMAC signature headers, new bridge dropped `?token=` support). Upgrade both in the same window. See [PAGES.md](./PAGES.md#桥接bridge用户须知).
 
 ### Bridge Endpoints (`/health` is public, the rest need HMAC signature headers)
+
+> The legacy `x-token` / `Bearer` headers are still accepted for compatibility and debugging.
 
 | Path | Description |
 | --- | --- |
@@ -165,7 +167,7 @@ GET  /api/admin/stats
 
 ```bash
 npm install          # install wrangler and friends
-npm test             # run the test suite (155 tests)
+npm test             # run the test suite
 npm run dev          # http://localhost:8787 (wrangler dev, needs workerd)
 npm run dev:node     # same port, pure Node (tools/dev-server.mjs), no workerd needed
 ```
@@ -196,9 +198,9 @@ Tests use real `t.me` page snapshots in `tests/fixtures/`. `tests/frontend.test.
 - Session cookies: `HttpOnly + SameSite=Lax + Secure(HTTPS)`, server-side TTL check
 - Passwords: PBKDF2-SHA256 + random salt (100k rounds), constant-time comparison
 - Login rate limit: 8 failures per IP in 5 min → `429`
-- Media proxy SSRF guard: allowlist (`telesco.pe / t.me / telegram.org / telegram-cdn.*` + bridge host), `https` only
+- Media proxy SSRF guard: allowlist (`telesco.pe / t.me / telegram.org / telegram-cdn.org / telegram-cdn.net` + bridge host), `https` only (bridge host may use `http`)
 - Post HTML sanitized server-side: drops `script/style/iframe` + all event attrs, external links forced `target=_blank rel=noopener`
-- Channel identifier validation: usernames `^[A-Za-z0-9_]{4,64}$`, numeric IDs `^-?\d{5,25}$`
+- Channel identifier validation: usernames `^[A-Za-z0-9_]{4,64}$`, numeric IDs `^-\d{5,25}$`
 
 ## Contributing
 

@@ -5,12 +5,16 @@ import { api, ApiError } from "./api.js";
 import { el, clear, toast, avatarNode, closeLightbox } from "./ui.js";
 import { renderFeed, renderChannel } from "./views.js";
 import { renderMedia } from "./media.js";
-import { renderAdmin } from "./admin.js";
+import { renderAdmin, isAdminFormDirty } from "./admin.js";
 
 reg("app", {
   themeAuto: { zh: "主题：跟随系统", en: "Theme: follow system" },
   themeDark: { zh: "主题：深色", en: "Theme: dark" },
   themeLight: { zh: "主题：浅色", en: "Theme: light" },
+  langLoseConfirm: {
+    zh: "语言切换会重建当前页面，表单中未保存的修改将丢失。确定切换吗？",
+    en: "Switching language re-renders this page; unsaved form changes will be lost. Switch anyway?",
+  },
   noChannels: { zh: "还没有频道", en: "No channels yet" },
   addFirst: { zh: "去添加 →", en: "Add some →" },
   adminLogin: { zh: "管理员登录 →", en: "Admin login →" },
@@ -291,11 +295,32 @@ async function route() {
 window.addEventListener("hashchange", route);
 
 // 语言切换：setLang() 先刷静态节点（applyStatic）再广播本事件；
-// 这里补上动态部分——切换按钮文案、meta description，并直接重渲染当前视图
+// 这里补上动态部分——切换按钮文案、meta description，并直接重渲染当前视图。
+// admin 表单有未保存输入时（重渲染即丢）：confirm 确认后才重渲染；取消则把语言滚回旧值
+let renderedLang = getLang(); // 上次完成渲染时的语言（取消切换时回滚的目标）
+let revertingLang = false;
+
 window.addEventListener("tg:langchange", () => {
   syncLangToggle();
   updateMetaDesc();
+  if (revertingLang) {
+    // 回滚触发的第二次广播：UI 已按旧语言刷回，只复位状态，不重渲染
+    revertingLang = false;
+    renderedLang = getLang();
+    return;
+  }
+  if (isAdminFormDirty()) {
+    if (confirm(t("app.langLoseConfirm"))) {
+      route();
+      renderedLang = getLang();
+      return;
+    }
+    revertingLang = true;
+    setLang(renderedLang); // 触发回滚广播（上面 reverting 分支消费）
+    return;
+  }
   route();
+  renderedLang = getLang();
 });
 
 /* ---------------------------------------------------------------- 启动 */
@@ -320,7 +345,7 @@ async function boot() {
     }
     document.title = state.config.siteTitle || "TG-RSS";
     const versionNode = document.getElementById("app-version");
-    if (versionNode) versionNode.textContent = `v${state.config.version || "1.3.1"}`;
+    if (versionNode) versionNode.textContent = `v${state.config.version || "1.3.2"}`;
   } catch (err) {
     console.error("配置加载失败", err);
   }

@@ -152,9 +152,25 @@ const TABS = [
   { key: "security", label: t("adm.tabSecurity") },
 ];
 
+/* 语言切换会 route() 重建表单——这里跟踪是否有未保存输入，供 app 壳 confirm 提示 */
+let formDirty = false;
+
+/** admin 表单自上次渲染/保存后是否有编辑（语言切换等全量重渲染前检查用） */
+export function isAdminFormDirty() {
+  return formDirty;
+}
+
+// 模块级委托监听：同一 root 上重复 addEventListener（同函数同捕获）按规范去重，不累积
+function onFormInput() {
+  formDirty = true;
+}
+
 export async function renderAdmin(root, ctx, tab = "general") {
   clear(root);
   root.classList.remove("wide");
+  formDirty = false; // 重建即无未保存输入（旧输入已随重建丢失）
+  root.addEventListener("input", onFormInput);
+  root.addEventListener("change", onFormInput);
 
   let state;
   try {
@@ -435,6 +451,7 @@ function renderGeneral(body, ctx, settings) {
       document.getElementById("site-title").textContent = title.input.value;
       ctx.applyTheme(theme.select.value);
       toast(t("adm.okSaved"), "ok");
+      formDirty = false; // 已入库的编辑不再是"未保存"
     } catch (err) {
       toast(err.message, "error");
     } finally {
@@ -787,6 +804,7 @@ function renderMediaSettings(body, ctx, settings) {
         media: { video: video.input.checked, image: image.input.checked, audio: audio.input.checked, file: file.input.checked, pageSize: Number(pageSize.input.value) },
       };
       toast(t("adm.okSaved"), "ok");
+      formDirty = false; // 已入库的编辑不再是"未保存"
     } catch (err) {
       toast(err.message, "error");
     } finally {
@@ -837,6 +855,7 @@ function renderBridge(body, ctx, settings) {
       // 回写内存 settings：切 tab 重绘时 b.hasToken / url / enabled 状态行才是新值
       Object.assign(settings, res);
       toast(t("adm.okSaved"), "ok");
+      formDirty = false; // 已入库的编辑不再是"未保存"
     } catch (err) {
       toast(err.message, "error");
     } finally {

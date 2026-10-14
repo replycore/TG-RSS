@@ -156,3 +156,53 @@ test("stale-if-error：网络级失败也走兜底（502→旧内容）", async 
     assert.ok(res.posts.length > 0);
   });
 });
+
+test("stale-if-error：7天上限按内容原始时间算，冷却回写不重置上限", async () => {
+  const cfCache = makeCFCache();
+  let upstreamMode = "ok";
+  await withGlobals({ default: cfCache }, async () => {
+    if (upstreamMode === "rate") return new Response("rate limited", { status: 429 });
+    return new Response(pageHtml, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+  }, async () => {
+    const setAges = async (storedAgoMs, originalAgoMs) => {
+      const key = [...cfCache.store.keys()][0];
+      const old = cfCache.store.get(key);
+      const body = Buffer.from(await old.arrayBuffer());
+      const headers = new Headers(old.headers);
+      headers.set("x-cache-stored-at", String(Date.now() - storedAgoMs));
+      if (originalAgoMs != null) headers.set("x-cache-original-at", String(Date.now() - originalAgoMs));
+      else headers.delete("x-cache-original-at");
+      cfCache.store.set(key, new Response(body, { status: old.status, headers }));
+    };
+
+    const DAY = 86400 * 1000;
+
+    // 1) 内容6天前（无 original 头，判定回退 stored-at）→ 上游故障应兜底
+    await fetchPublicChannelPage({}, {}, "tgtest", null, 120);
+    await setAges(6 * DAY, null);
+    upstreamMode = "rate";
+    const r1 = await fetchPublicChannelPage({}, {}, "tgtest", null, 120);
+    assert.equal(r1.cacheStatus, "STALE", "6天前内容应兜底");
+
+    // 2) 兜底回写必须继承原始时间（否则冷却刷新 stored-at 会绕过7天上限）
+    const key = [...cfCache.store.keys()][0];
+    const stored = cfCache.store.get(key);
+    const origHeader = stored.headers.get("x-cache-original-at");
+    assert.ok(origHeader, "回写条目必须带 x-cache-original-at");
+    assert.ok(Date.now() - Number(origHeader) > 5 * DAY, "original-at 应保留约6天前的原始时间");
+
+    // 3) stored-at 过期（冷却已过）、original 仍6天 → 继续兜底
+    const origTs = Number(origHeader); // 绝对时间戳 → setAges 要的是"多久以前"的时长
+    await setAges(6 * DAY + 120 * 1000, Date.now() - origTs);
+    const r2 = await fetchPublicChannelPage({}, {}, "tgtest", null, 120);
+    assert.equal(r2.cacheStatus, "STALE", "original 6天<7天，仍应兜底");
+
+    // 4) original 到8天（时间流逝）→ 上限触发，不再兜底，如实报错
+    await setAges(8 * DAY + 120 * 1000, 8 * DAY);
+    await assert.rejects(
+      () => fetchPublicChannelPage({}, {}, "tgtest", null, 120),
+      (err) => err.status === 429 && err.code === "rate_limited",
+      "超过7天的内容不得兜底，应透传上游错误",
+    );
+  });
+});

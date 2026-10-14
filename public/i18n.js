@@ -1,8 +1,10 @@
 /** TG-RSS 多语言（i18n）
  *
  * 设计约定（评审/协作请遵守）：
- * - 默认 zh-CN；语言只由用户手动切换并存 localStorage（key: tg_rss_lang），
- *   **不做浏览器语言自动探测**——避免无头测试环境（happy-dom 默认 en-US）误判导致断言中文失败。
+ * - 默认 zh-CN；语言由 localStorage（key: tg_rss_lang）决定——用户手动切换后以其为准；
+ *   未手动选过时按浏览器语言初始化（navigator.language 匹配 /^en(\b|-)/ → en，其余 → zh-CN）。
+ *   自动探测限定非 Node 进程（Node 21+ 自带 navigator.language=en-US，且无头测试环境
+ *   （happy-dom 默认 en-US）会被误判导致断言中文失败）。
  * - 各业务模块用 reg(section, entries) 注册自己的词条；key = `${section}.${name}`。
  *   词条值 { zh, en }；zh 必须与原中文字面量一字不差（默认中文渲染有测试断言）。
  * - t(key, vars) 取词条：en 缺失回退 zh，词条缺失回退 key 本身（安全，不抛错）。
@@ -25,6 +27,12 @@ try {
     lang = /^en(\b|-)/i.test(navigator.language) ? "en" : "zh-CN";
   }
 } catch { /* 无 localStorage 环境保持默认 */ }
+
+// 初始化即同步 <html lang>（index.html 硬编码 zh-CN，保存 en/按浏览器判为 en 的用户
+// 在点切换前 lang 也是错的，会让屏幕阅读器/翻译工具误判）；setLang() 里是切换时的同步
+try {
+  if (typeof document !== "undefined" && document.documentElement) document.documentElement.lang = lang;
+} catch { /* 无 document 环境保持默认 */ }
 
 export function getLang() {
   return lang;

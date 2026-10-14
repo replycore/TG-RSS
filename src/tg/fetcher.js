@@ -36,6 +36,9 @@ function stripHopHeaders(response, body) {
  * 原先命中即返回且不设 cache-control，边缘/浏览器可能把私密/短 TTL 内容当公开无限缓存。
  */
 const CACHED_AT = "x-cache-stored-at";
+// stale 兜底的内容原始写入时间：serveStale 每次回写会把 CACHED_AT 刷成当前时间（冷却语义），
+// 7 天上限必须对这个原始时间算，否则每次兜底都刷新时间戳、上限永远不触发
+const ORIGINAL_AT = "x-cache-original-at";
 
 async function cachedFetch(upstream, ttl, ctx) {
   const cache = getCache();
@@ -51,8 +54,11 @@ async function cachedFetch(upstream, ttl, ctx) {
         const storedAt = Number(hit.headers.get(CACHED_AT));
         const ageSec = storedAt > 0 ? (Date.now() - storedAt) / 1000 : 0;
         if (Number.isFinite(storedAt) && storedAt > 0 && ageSec <= ttl) return withUpMarker(hit, "HIT");
-        // 过期：留作 stale 兜底（上限7天，太旧的内容宁可报错也不展示）
-        if (Number.isFinite(storedAt) && storedAt > 0 && ageSec <= 7 * 86400) stale = hit;
+        // 过期：留作 stale 兜底（上限7天，对内容原始写入时间算——serveStale 会刷新 stored-at，
+        // 用它判会让每次兜底都重置上限；太旧的内容宁可报错也不展示）
+        const originalAt = Number(hit.headers.get(ORIGINAL_AT) || hit.headers.get(CACHED_AT));
+        const origAgeSec = originalAt > 0 ? (Date.now() - originalAt) / 1000 : 0;
+        if (Number.isFinite(originalAt) && originalAt > 0 && origAgeSec <= 7 * 86400) stale = hit;
         try { await cache.delete(cacheKey); } catch { /* ignore */ }
       }
     } catch {
@@ -112,6 +118,9 @@ async function serveStale(stale, cacheKey, cache, ctx) {
       const stored = stripHopHeaders(stale.clone(), stale.clone().body);
       stored.headers.set("cache-control", `public, max-age=${STALE_COOLDOWN_SEC}`);
       stored.headers.set(CACHED_AT, String(Date.now()));
+      // 冷却回写刷新 stored-at，但内容原始时间必须继承（否则 7 天上限被绕过）
+      const orig = Number(stale.headers.get(ORIGINAL_AT) || stale.headers.get(CACHED_AT));
+      stored.headers.set(ORIGINAL_AT, String(Number.isFinite(orig) && orig > 0 ? orig : Date.now()));
       const done = cache.put(cacheKey, stored).catch(() => {});
       if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(done);
       else await done;
