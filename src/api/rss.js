@@ -3,7 +3,7 @@
  *   GET /api/rss            聚合信息流（与首页一致，只含可见频道，按发布时间倒序）
  *   GET /rss.xml            同上，便于客户端识别的别名
  *   GET /api/rss?channel=k  单个频道
- *   可选 limit=5..200（默认 50）
+ *   可选 limit（默认 50）：聚合路径 10..120，单频道路径 5..50
  */
 import { clampInt, HttpError, htmlToText } from "../util.js";
 import { getGeneral } from "../store.js";
@@ -146,16 +146,18 @@ ${selfHref ? `    <atom:link href="${escapeXml(selfHref)}" rel="self" type="appl
 `;
 }
 
-function xmlResponse(body, maxAge, isPrivate) {
-  return new Response(body, {
-    headers: {
-      "content-type": "application/rss+xml; charset=utf-8",
-      // 带令牌的源含私密内容：private 让共享缓存（CF 边缘）不落盘，每次回源
-      "cache-control": `${isPrivate ? "private" : "public"}, max-age=${Math.max(0, maxAge)}`,
-      "x-content-type-options": "nosniff",
-      "referrer-policy": "no-referrer",
-    },
-  });
+/** XML 响应封装（可单测） */
+export function xmlResponse(body, maxAge, isPrivate, isStale) {
+  const headers = {
+    "content-type": "application/rss+xml; charset=utf-8",
+    // 带令牌的源含私密内容：private 让共享缓存（CF 边缘）不落盘，每次回源
+    // stale 兜底的内容不能让阅读器当新鲜缓存：max-age=0 + Warning 110
+    "cache-control": `${isPrivate ? "private" : "public"}, max-age=${isStale ? 0 : Math.max(0, maxAge)}`,
+    "x-content-type-options": "nosniff",
+    "referrer-policy": "no-referrer",
+  };
+  if (isStale) headers["warning"] = '110 - "Response is Stale"';
+  return new Response(body, { headers });
 }
 
 /** 401：令牌无效/缺失（阅读器据此提示需要凭据），带标准 WWW-Authenticate */
@@ -206,7 +208,7 @@ export async function rssFeed(request, env, ctx, url) {
   const origin = new URL(request.url).origin;
   const maxAge = Number.isFinite(general.cacheTtl) ? general.cacheTtl : 120;
   const channelKey = (url.searchParams.get("channel") || "").trim();
-  const limit = clampInt(url.searchParams.get("limit"), 5, 200, 50);
+  const limit = clampInt(url.searchParams.get("limit"), 10, 120, 50);
 
   try {
     if (channelKey) {
@@ -225,7 +227,7 @@ export async function rssFeed(request, env, ctx, url) {
         posts,
         origin,
       });
-      return xmlResponse(xml, maxAge, authed);
+      return xmlResponse(xml, maxAge, authed, res._up === "STALE");
     }
 
     const feedUrl = new URL(url);
@@ -244,6 +246,8 @@ export async function rssFeed(request, env, ctx, url) {
       throw upstreamBusy("上游频道抓取失败，稍后自动重试");
     }
 
+    // 任一频道走了 stale 兜底，整份源都按 stale 交付（阅读器不应当成新鲜内容缓存）
+    const isStale = Array.isArray(res._up) && res._up.includes("STALE");
     const xml = renderRss({
       title: general.siteTitle,
       link: `${origin}/`,
@@ -252,7 +256,7 @@ export async function rssFeed(request, env, ctx, url) {
       posts,
       origin,
     });
-    return xmlResponse(xml, maxAge, authed);
+    return xmlResponse(xml, maxAge, authed, isStale);
   } catch (err) {
     throw mapRssError(err);
   }

@@ -21,6 +21,7 @@ const MAX_MEDIA_CHANNELS = 6;
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 const MAX_EDGE_CACHE_BYTES = 8 * 1024 * 1024;
+const MEDIA_CACHE_TTL_SEC = 86400; // 媒体代理缓存 TTL：超龄命中视为未命中走回源
 
 function getCache() {
   try {
@@ -103,7 +104,9 @@ export async function getMediaList(request, env, ctx, url, authenticated) {
         }
         mediaPostsByChannel.set(ch.key, mediaPosts);
       } catch (err) {
-        nextCursors[ch.key] = null;
+        // 出错频道恢复原游标（null = 已翻完，写成 null 会导致瞬时错误永久丢内容）
+        if (typeof cursors[ch.key] === "string") nextCursors[ch.key] = cursors[ch.key];
+        else delete nextCursors[ch.key];
         errors.push({ key: ch.key, message: err?.message || "fetch_failed" });
       }
     }),
@@ -348,7 +351,8 @@ export async function proxyMedia(request, env, ctx, url) {
   // H-1：桥接主机的代理必须带本 Worker 对 u 的签名（<img> 无法带 header，签名在 URL 里）。
   // 拒绝未签名的 u → 挡住 RSS 泄露的 bridge URL 被枚举（ch/m 暴力）读取私密频道任意媒体。
   if (isBridge && bridge.token) {
-    const ok = await verifyProxySig(bridge.token, raw, url.searchParams.get("sig"));
+    // 代理 URL 签名带过期时间：RSS 令牌轮换/吊销后，已发出的旧 sig 随 exp 过期而失效
+    const ok = await verifyProxySig(bridge.token, raw, url.searchParams.get("sig"), url.searchParams.get("exp"));
     if (!ok) throw new HttpError(403, "媒体代理链接未签名或签名无效", "bad_proxy_sig");
   }
 
@@ -375,15 +379,22 @@ export async function proxyMedia(request, env, ctx, url) {
     try {
       const hit = await cache.match(cacheKey);
       if (hit) {
-        // 修复前可能缓存了 HTML，命中也要过安检；不通过就丢缓存改走上游（上游会拒绝）
-        let hitMode = null;
-        try {
-          hitMode = checkProxyContentType(hit.headers.get("content-type"));
-        } catch {
-          hitMode = null;
+        // 媒体缓存 TTL：命中但超龄（或无时间戳）视为未命中，删条目后走回源
+        const storedAt = Number(hit.headers.get("x-cache-stored-at") || 0);
+        const ageSec = storedAt > 0 ? (Date.now() - storedAt) / 1000 : Infinity;
+        if (ageSec > MEDIA_CACHE_TTL_SEC) {
+          if (typeof cache.delete === "function") await cache.delete(cacheKey).catch(() => {});
+        } else {
+          // 修复前可能缓存了 HTML，命中也要过安检；不通过就丢缓存改走上游（上游会拒绝）
+          let hitMode = null;
+          try {
+            hitMode = checkProxyContentType(hit.headers.get("content-type"));
+          } catch {
+            hitMode = null;
+          }
+          if (hitMode) return dl ? withAttachment(hit, filename, hitMode) : withBrowserCache(hit, hitMode);
+          if (typeof cache.delete === "function") await cache.delete(cacheKey).catch(() => {});
         }
-        if (hitMode) return dl ? withAttachment(hit, filename, hitMode) : withBrowserCache(hit, hitMode);
-        if (typeof cache.delete === "function") await cache.delete(cacheKey).catch(() => {});
       }
     } catch {
       /* ignore */
@@ -425,7 +436,13 @@ export async function proxyMedia(request, env, ctx, url) {
     // 不再原样透传上游错误页（HTML 错误页会成为同源可执行内容），统一 JSON 错误
     if (res.body && typeof res.body.cancel === "function") await res.body.cancel().catch(() => {});
     const status = res.status >= 400 && res.status <= 599 ? res.status : 502;
-    throw new HttpError(status, `上游返回 ${res.status}`, "upstream_status");
+    const err = new HttpError(status, `上游返回 ${res.status}`, "upstream_status");
+    // 416 按 RFC 9110 §15.5.22 应携带 Content-Range（文件总大小），播放器续传需要它
+    if (res.status === 416) {
+      const cr = res.headers.get("content-range");
+      if (cr) err.headers = { "content-range": cr };
+    }
+    throw err;
   }
 
   // 内容类型安检：HTML 拒绝 / SVG·XML 沙箱化
@@ -477,7 +494,14 @@ export async function proxyMedia(request, env, ctx, url) {
     const storedHeaders = new Headers(stored.headers);
     storedHeaders.delete("set-cookie");
     storedHeaders.delete("content-encoding");
-    const cached = new Response(stored.body, { status: 200, headers: storedHeaders });
+    // 与 live 路径对齐：Workers 的 fetch 已解压 gzip body，压缩后 content-length 会过期，
+    // 命中时返回会导致客户端截断文件
+    storedHeaders.delete("content-length");
+    storedHeaders.set("x-cache-stored-at", String(Date.now()));
+    // L-5：缓存分支也过 ByteCounter——上游虚报 content-length 时，超限的 body 不落盘
+    const storedBody = stored.body ? stored.body.pipeThrough(new ByteCounter(MAX_PROXY_BYTES)) : null;
+    const cached = new Response(storedBody, { status: 200, headers: storedHeaders });
+    // 超限时 ByteCounter 使 body 出错，cache.put 失败即不存（catch 吞掉）
     const done = cache.put(cacheKey, cached).catch((err) => console.error("[media cache]", err));
     if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(done);
     else await done.catch(() => {});

@@ -11,6 +11,7 @@ const fakeKv = {
   async get() { return null; },
   async put() {},
   async delete() {},
+  async list() { return { keys: [], list_complete: true, cursor: undefined }; },
 };
 
 function makeUrl(target, extra = "") {

@@ -153,10 +153,12 @@ export async function handleChangePassword(request, env, body) {
   if (credential.source === "env") {
     throw new HttpError(400, "当前使用环境变量 ADMIN_PASSWORD，请修改环境变量而非数据库凭据", "env_managed");
   }
-  await createAdminCredential(env, credential.username, next);
-  // 换密码后强制重新登录：bump 会话纪元 → 所有已发出去的会话（包括攻击者已持有的、
-  // 其他浏览器的）在下次 getSession 时全部失效；当前会话一并销毁
+  // fail-closed 顺序：先 bump 会话纪元杀掉所有旧会话（含攻击者已持有的），再写新密码。
+  // 若 bump 的 KV 写入失败：密码未改、会话未动；若写新密码失败：旧会话已被杀，
+  // 用户用旧密码重登即可，无安全损失。反过来（先写密码后 bump）在 KV 故障时会
+  // fail-open：新密码生效但旧会话全活。
   await bumpAuthEpoch(env);
+  await createAdminCredential(env, credential.username, next);
   if (state.token) await destroySession(env, state.token);
   return { ok: true, reauth: true };
 }

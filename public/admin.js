@@ -161,6 +161,11 @@ export function isAdminFormDirty() {
   return formDirty;
 }
 
+/** 清除 admin 未保存标记：表单被重建/保存/切走时调用（否则后续语言切换会误弹 confirm） */
+export function resetAdminFormDirty() {
+  formDirty = false;
+}
+
 // 模块级委托监听：同一 root 上重复 addEventListener（同函数同捕获）按规范去重，不累积
 function onFormInput() {
   formDirty = true;
@@ -235,6 +240,7 @@ export async function renderAdmin(root, ctx, tab = "general") {
 
   function switchTab(key) {
     currentTab = key;
+    formDirty = false; // 切 tab 重绘 body，旧 tab 的未保存输入已随重建丢失
     for (const [k, link] of Object.entries(links)) link.classList.toggle("active", k === key);
     try {
       renderBody();
@@ -603,7 +609,7 @@ function renderChannels(body, ctx, settings) {
       const username = normalizeChannelInput(ch.username);
       if (!username) return toast(t("adm.errBadUsername"), "error");
       ch.username = username;
-    } else if (!/^-?\d{5,25}$/.test(ch.tgId)) return toast(t("adm.errBadId"), "error");
+    } else if (!/^-\d{5,25}$/.test(ch.tgId)) return toast(t("adm.errBadId"), "error"); // 与服务端 validateChannel 一致：私密频道必须是负数 ID
     if (!ch.name) ch.name = ch.type === "public" ? ch.username : ch.tgId;
     if (channels.some((c) => c.key === keyOf(ch))) return toast(t("adm.errDup"), "error");
     channels.push({ ...ch, key: keyOf(ch), order: channels.length });
@@ -743,9 +749,12 @@ function renderChannels(body, ctx, settings) {
   saveBtn.onclick = async () => {
     saveBtn.disabled = true;
     try {
-      await api.saveSettings({ channels: channels.map((c, i) => ({ ...c, order: i })) });
+      const res = await api.saveSettings({ channels: channels.map((c, i) => ({ ...c, order: i })) });
+      // 回写内存 settings：服务端返回完整新 settings，切 tab 重绘时表格才是新值
+      Object.assign(settings, res);
       await ctx.refreshChannels();
       toast(t("adm.okChSaved"), "ok");
+      formDirty = false; // 频道已入库，不再是"未保存"
     } catch (err) {
       toast(err.message, "error");
     } finally {
@@ -760,7 +769,10 @@ function renderChannels(body, ctx, settings) {
 
 function keyOf(ch) {
   if (ch.type === "public") return String(ch.username || "").replace(/^@/, "").toLowerCase();
-  return `p${String(ch.tgId || "").replace(/^-/, "")}`;
+  // 与服务端 normalizeChannel 同格式：priv:-100…（保留前导负号，避免与公开用户名 p12345 撞 key；
+  // 历史正数脏数据同样归一化补负号）
+  const tgId = String(ch.tgId || "");
+  return `priv:${/^\d+$/.test(tgId) ? `-${tgId}` : tgId}`;
 }
 
 /* ---------------------------------------------------------------- 媒体 */
@@ -855,6 +867,8 @@ function renderBridge(body, ctx, settings) {
       const res = await api.saveSettings(body2);
       // 回写内存 settings：切 tab 重绘时 b.hasToken / url / enabled 状态行才是新值
       Object.assign(settings, res);
+      // 状态行是渲染时一次性写入的，保存成功后同步刷新，否则一直显示旧文案
+      status.textContent = res.bridge?.fromEnv ? t("adm.stFromEnv") : res.bridge?.hasToken ? t("adm.stHasToken") : t("adm.stNoToken");
       toast(t("adm.okSaved"), "ok");
       formDirty = false; // 已入库的编辑不再是"未保存"
     } catch (err) {

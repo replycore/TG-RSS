@@ -37,6 +37,10 @@ class MockKV {
   async delete(key) {
     this.map.delete(key);
   }
+  async list({ prefix = "" } = {}) {
+    const names = [...this.map.keys()].filter((k) => k.startsWith(prefix));
+    return { keys: names.map((name) => ({ name })), list_complete: true, cursor: undefined };
+  }
 }
 
 const env = () => ({ TG_RSS_KV: new MockKV() });
@@ -55,7 +59,7 @@ test("validateChannel：私密频道", () => {
   const ok = validateChannel({ type: "private", tgId: "-1001234567890", name: "私密" });
   assert.equal(ok.error, undefined);
   assert.equal(ok.channel.tgId, "-1001234567890");
-  assert.equal(ok.channel.key, "p1001234567890");
+  assert.equal(ok.channel.key, "priv:-1001234567890");
 
   assert.ok(validateChannel({ type: "private", tgId: "abc" }).error);
   assert.ok(validateChannel({ type: "private", tgId: "" }).error);
@@ -80,7 +84,7 @@ test("saveChannels / getChannels 保持顺序并归一化", async () => {
   assert.deepEqual(list.map((c) => c.name), ["B", "私密", "A"]);
   assert.deepEqual(list.map((c) => c.order), [0, 1, 2]);
   assert.equal(list[1].hidden, true);
-  assert.equal(list[1].key, "p100999");
+  assert.equal(list[1].key, "priv:-100999");
 });
 
 test("管理员凭据：初始化 + 校验", async () => {
@@ -166,7 +170,7 @@ test("validateChannel：私密 tgId 必须负数（防 ± 同 key 的形同校�
   const zero = validateChannel({ type: "private", tgId: "0" });
   assert.ok(zero.error, "0 应拒绝");
   const ok1 = validateChannel({ type: "private", tgId: "-1001234567890" });
-  assert.equal(ok1.channel.key, "p1001234567890");
+  assert.equal(ok1.channel.key, "priv:-1001234567890");
   assert.equal(ok1.channel.hidden, true, "私密频道强制隐藏");
 });
 
@@ -184,11 +188,11 @@ test("会话纪元：bump 后所有旧会话失效（改密码批量注销）", 
 });
 
 test("normalizeChannel：历史正数 tgId 读时归一化为负数（存量脏数据迁移）", () => {
-  // 正数与负数同 key（p<无符号>），存量行的 key 不变，但 tgId 字段必须转负——
+  // 正数与负数归一化成同 key（priv:-<数字>），存量行的 key 不变，但 tgId 字段必须转负——
   // 否则发给 bridge 依然被判成 PeerUser
   const norm = normalizeChannel({ type: "private", tgId: "1001234567890", name: "旧频道" });
   assert.equal(norm.tgId, "-1001234567890");
-  assert.equal(norm.key, "p1001234567890", "key 与负数版一致，迁移无破坏");
+  assert.equal(norm.key, "priv:-1001234567890", "key 与负数版一致，迁移无破坏");
   // 负数原样、非数字原样
   assert.equal(normalizeChannel({ type: "private", tgId: "-1001234567890" }).tgId, "-1001234567890");
 });

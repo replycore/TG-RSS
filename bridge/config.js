@@ -8,30 +8,103 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 export function loadEnv(file = path.join(here, ".env")) {
   if (!fs.existsSync(file)) return {};
   const out = {};
-  const text = fs.readFileSync(file, "utf8");
-  for (const line of text.split(/\r?\n/)) {
-    const trimmed = line.trim();
+  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length) {
+    const rawLine = lines[i];
+    i += 1;
+    const trimmed = rawLine.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq < 0) continue;
     // 容忍 `export KEY=value`（shell 习惯误写进 .env）：剥掉前缀再取键名，
     // 否则键会变成 "export TG_API_ID"，排错时只看到「缺少环境变量」
     const cleaned = trimmed.replace(/^export\s+/, "");
-    const eq2 = cleaned.indexOf("=");
-    if (eq2 < 0) continue;
-    const key = cleaned.slice(0, eq2).trim();
-    let value = cleaned.slice(eq2 + 1).trim();
-    const quoted = (value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"));
-    if (quoted) {
-      value = value.slice(1, -1);
-    } else {
-      // 行内注释仅在未加引号时剥离：KEY=abc # 备注 → abc；"abc # x" 保持原样
-      const hash = value.indexOf(" #");
-      if (hash >= 0) value = value.slice(0, hash).trim();
+    const eq = cleaned.indexOf("=");
+    if (eq < 0) continue;
+    const key = cleaned.slice(0, eq).trim();
+    if (!key) continue;
+    let rest = cleaned.slice(eq + 1);
+    // 双引号多行值：累积到闭合引号（含转义 \"），引号内的 # / 换行都保留；
+    // 到文件尾仍未闭合则直接抛错，不静默截断
+    if (rest.trimStart().startsWith('"') && rest.trim() !== '"' && indexOfUnescapedQuote(rest, rest.indexOf('"') + 1) < 0) {
+      const buf = [rest];
+      let closed = false;
+      while (i < lines.length) {
+        buf.push(lines[i]);
+        i += 1;
+        if (indexOfUnescapedQuote(buf.join("\n"), 1) >= 0) {
+          closed = true;
+          break;
+        }
+      }
+      if (!closed) throw new Error(`.env 解析失败：${key} 的双引号未闭合`);
+      rest = buf.join("\n");
     }
-    out[key] = value;
+    out[key] = parseEnvValue(rest);
   }
   return out;
+}
+
+/** 在 s 中找第一个未被反斜杠转义的双引号下标（从 from 开始），找不到返回 -1 */
+function indexOfUnescapedQuote(s, from = 0) {
+  for (let j = from; j < s.length; j += 1) {
+    if (s[j] === "\\") {
+      j += 1;
+      continue;
+    }
+    if (s[j] === '"') return j;
+  }
+  return -1;
+}
+
+/**
+ * 引号感知剥行内注释：双引号（支持 \" 转义）/单引号内的 # 保留；
+ * 引号外的 ` #`（空格/Tab + #）剥离。无引号值沿用旧行为（`a#b` 保留）。
+ */
+function stripInlineComment(s) {
+  let inSingle = false;
+  let inDouble = false;
+  for (let j = 0; j < s.length; j += 1) {
+    const c = s[j];
+    if (inDouble) {
+      if (c === "\\") {
+        j += 1;
+        continue;
+      }
+      if (c === '"') inDouble = false;
+      continue;
+    }
+    if (inSingle) {
+      if (c === "'") inSingle = false;
+      continue;
+    }
+    if (c === '"') {
+      inDouble = true;
+      continue;
+    }
+    if (c === "'") {
+      inSingle = true;
+      continue;
+    }
+    if (c === "#" && (j === 0 || s[j - 1] === " " || s[j - 1] === "\t")) {
+      return s.slice(0, j).trimEnd();
+    }
+  }
+  return s;
+}
+
+/** 双引号内转义：\" → "、\\ → \、\n → 换行；其它反斜杠序列原样保留 */
+function unescapeDoubleQuoted(s) {
+  return s.replace(/\\(\\|"|n)/g, (m, c) => (c === "n" ? "\n" : c));
+}
+
+function parseEnvValue(rest) {
+  const noComment = stripInlineComment(rest).trim();
+  if (noComment === '"') return '"'; // 单个引号字符按普通字符处理
+  const dq = noComment.length >= 2 && noComment.startsWith('"') && noComment.endsWith('"');
+  const sq = noComment.length >= 2 && noComment.startsWith("'") && noComment.endsWith("'");
+  if (dq) return unescapeDoubleQuoted(noComment.slice(1, -1));
+  if (sq) return noComment.slice(1, -1);
+  return noComment;
 }
 
 const fileEnv = loadEnv();
@@ -43,7 +116,15 @@ export const config = {
   phone: String(env.TG_PHONE || ""),
   session: String(env.TG_SESSION || ""),
   token: String(env.BRIDGE_TOKEN || ""),
-  port: Number(env.PORT || 8788),
+  port: (() => {
+    // 非法 PORT 直接启动抛错（不静默 clamp）：NaN/越界会让 server.listen 崩溃，
+    // 0 会绑随机端口但 baseUrl() 仍报 :0，fail-fast 比运行时排错便宜
+    const p = Number(env.PORT || 8788);
+    if (!Number.isInteger(p) || p < 1 || p > 65535) {
+      throw new Error(`PORT 非法：${env.PORT}（应为 1–65535 的整数）`);
+    }
+    return p;
+  })(),
   // 默认只监听本机：私密频道内容不应直接暴露在局域网，需要对外时设 BRIDGE_HOST=0.0.0.0
   host: String(env.BRIDGE_HOST || "127.0.0.1"),
   publicUrl: String(env.PUBLIC_URL || "").replace(/\/+$/, ""),

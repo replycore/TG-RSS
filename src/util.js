@@ -309,7 +309,6 @@ export function htmlToText(input) {
     .replace(/<\/(p|div|blockquote|pre|tr)>/gi, "\n")
     .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
@@ -317,6 +316,8 @@ export function htmlToText(input) {
     // 数字字符引用：&#65; → A、&#x22; → "（t.me 的 <a href="…"> 常带这类实体）
     .replace(/&#x([0-9a-f]+);/gi, (_, hex) => safeCodePoint(parseInt(hex, 16)))
     .replace(/&#(\d+);/g, (_, dec) => safeCodePoint(parseInt(dec, 10)))
+    // &amp; 必须最后：先解码会把 "&amp;#65;"（字面文本 &#65;）二次解成 "A"
+    .replace(/&amp;/g, "&")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();

@@ -34,6 +34,10 @@ function mockEnv(channels, general = null) {
       },
       async put(key, value) { store.set(key, value); },
       async delete(key) { store.delete(key); },
+      async list({ prefix = "" } = {}) {
+        const names = [...store.keys()].filter((k) => k.startsWith(prefix));
+        return { keys: names.map((name) => ({ name })), list_complete: true, cursor: undefined };
+      },
     },
   };
 }
@@ -50,6 +54,10 @@ function page(username, posts, moreBefore) {
     : "";
   return `<html><body>${blocks}${more}</body></html>`;
 }
+
+// 空页面：无帖子、无 more 链接 → next=null（翻完）。此前漏定义导致引用抛错，
+// 靠旧 catch→null 才"碰巧"翻完；游标修复后必须给真正的空页面。
+const EMPTY_PAGE = "<html><body></body></html>";
 
 const d = (day, hour = 10) => `2024-${day}T${String(hour).padStart(2, "0")}:00:00`;
 const chana1 = page("chana", [205, 204, 203, 202, 201, 200].map((id, i) => ({ id, date: `2024-06-0${6 - i}T10:00:00` })), 200);

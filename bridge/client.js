@@ -65,6 +65,12 @@ export async function fetchMessages(peer, { before = null, limit = 20 } = {}) {
 }
 
 /** 下载媒体到本地缓存，返回绝对路径 */
+// 并发单飞：同一媒体的并发下载共享同一个 promise。否则两路同时下载会共用
+// 同一个 tmp 路径（无锁），后完成的 rename 会覆盖/截断先完成的文件，永久
+// serve 坏缓存；或一方在 existsSync/renameSync 间隙看到中间态而 500。
+const inflightDownloads = new Map();
+
+/** 下载媒体到本地缓存，返回绝对路径 */
 export async function downloadMediaToCache(peer, msg) {
   const client = await getClient();
   const channelId = String(peer.id ?? peer);
@@ -84,26 +90,47 @@ export async function downloadMediaToCache(peer, msg) {
   });
   if (existing) return path.join(dir, existing);
 
-  const ext = guessExtension(msg);
-  const tmp = path.join(dir, `${base}.${ext}.part`);
-  const target = path.join(dir, `${base}.${ext}`);
+  const inflightKey = `${dir}/${base}`;
+  const ongoing = inflightDownloads.get(inflightKey);
+  if (ongoing) return ongoing;
+  const task = (async () => {
+    const ext = guessExtension(msg);
+    // tmp 加随机后缀：退化并发（单飞间隙/多进程）下也不互相覆盖 tmp
+    const tmp = path.join(dir, `${base}.${ext}.${Math.random().toString(36).slice(2, 10)}.part`);
+    const target = path.join(dir, `${base}.${ext}`);
 
-  // L-2：把 downloadMedia 的 outputFile 指向临时文件，让 teleproto 直接流式写盘，
-  // 而不是把整个视频装进内存 Buffer（几百 MB 视频会 OOM / GC 抖动）。
-  let result;
+    // L-2：把 downloadMedia 的 outputFile 指向临时文件，让 teleproto 直接流式写盘，
+    // 而不是把整个视频装进内存 Buffer（几百 MB 视频会 OOM / GC 抖动）。
+    let result;
+    try {
+      result = await client.downloadMedia(msg.media ?? msg, { outputFile: tmp });
+    } catch {
+      result = await client.downloadMedia(msg, { outputFile: tmp });
+    }
+    // 某些媒体类型（小图等）仍可能返回 Buffer；统一落到 tmp 再原子 rename
+    if (Buffer.isBuffer(result)) fs.writeFileSync(tmp, result);
+
+    if (!fs.existsSync(tmp) || fs.statSync(tmp).size === 0) throw new Error("媒体下载失败");
+    // 若等待期间已有完整目标（另一路先落盘），直接复用，不覆盖
+    if (fs.existsSync(target)) {
+      try {
+        fs.rmSync(tmp, { force: true });
+      } catch {
+        /* 忽略清理错误 */
+      }
+      return target;
+    }
+    fs.renameSync(tmp, target);
+    // L-3：落盘后触发一次后台淘汰（不阻塞返回）
+    evictCacheAsync(dir);
+    return target;
+  })();
+  inflightDownloads.set(inflightKey, task);
   try {
-    result = await client.downloadMedia(msg.media ?? msg, { outputFile: tmp });
-  } catch {
-    result = await client.downloadMedia(msg, { outputFile: tmp });
+    return await task;
+  } finally {
+    inflightDownloads.delete(inflightKey);
   }
-  // 某些媒体类型（小图等）仍可能返回 Buffer；统一落到 tmp 再原子 rename
-  if (Buffer.isBuffer(result)) fs.writeFileSync(tmp, result);
-
-  if (!fs.existsSync(tmp) || fs.statSync(tmp).size === 0) throw new Error("媒体下载失败");
-  fs.renameSync(tmp, target);
-  // L-3：落盘后触发一次后台淘汰（不阻塞返回）
-  evictCacheAsync(dir);
-  return target;
 }
 
 /**

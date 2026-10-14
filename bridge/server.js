@@ -17,7 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { config, requireConfig, baseUrl } from "./config.js";
-import { resolvePeer, fetchMessages, getMessageById, downloadMediaToCache, downloadAvatarToCache, downloadThumbToCache, getMe, disconnect } from "./client.js";
+import { resolvePeer, fetchMessages, getMessageById, downloadMediaToCache, downloadAvatarToCache, downloadThumbToCache, getMe, disconnect, evictCacheSync } from "./client.js";
 import { messageToPost, peerInfo, pickVideoThumb } from "./post.js";
 import { authorized, responseSignatureHeaders } from "./auth.js";
 

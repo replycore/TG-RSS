@@ -5,7 +5,7 @@ import { api, ApiError } from "./api.js";
 import { el, clear, toast, avatarNode, closeLightbox } from "./ui.js";
 import { renderFeed, renderChannel } from "./views.js";
 import { renderMedia } from "./media.js";
-import { renderAdmin, isAdminFormDirty } from "./admin.js";
+import { renderAdmin, isAdminFormDirty, resetAdminFormDirty } from "./admin.js";
 
 reg("app", {
   themeAuto: { zh: "主题：跟随系统", en: "Theme: follow system" },
@@ -77,7 +77,9 @@ const app = document.getElementById("app");
 
 const ctx = {
   state,
-  go: (hash) => { location.hash = hash; },
+  // 同 hash 赋值不触发 hashchange：登录/初始化成功后若已在目标 hash，
+  // 需主动重路由，否则登录表单一直留着（route 内部有 try/catch，不会 unhandled rejection）
+  go: (hash) => { if (location.hash === hash) route(); else location.hash = hash; },
   refreshChannels: async () => {
     await loadChannels();
     renderSidebar();
@@ -249,6 +251,9 @@ async function route() {
   const r = parseRoute();
   const seq = ++renderSeq;
   closeLightbox();
+  // 离开 admin 视图即丢弃其未保存输入（route 会 clear 容器），清 dirty 标记，
+  // 否则之后切语言会误弹"未保存的修改将丢失"；admin 视图内由 renderAdmin 入口清
+  if (r.name !== "admin") resetAdminFormDirty();
   setActiveNav(r.name === "channel" ? "feed" : r.name);
   renderSidebar();
 

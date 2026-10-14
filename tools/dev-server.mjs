@@ -49,7 +49,17 @@ function createKV() {
       });
     },
     async delete(key) { map.delete(key); },
-    async list() { return [...map.keys()].map((name) => ({ name })); },
+    // 与 Workers KV list({prefix,cursor}) 同形状：{ keys:[{name}], list_complete, cursor }；
+    // 过期 key 不返回（与真实 KV 的惰性删除语义一致）
+    async list({ prefix = "", cursor } = {}) {
+      const now = Date.now();
+      const names = [...map.keys()].filter((k) => {
+        if (prefix && !k.startsWith(prefix)) return false;
+        const rec = map.get(k);
+        return !rec || !rec.expiresAt || rec.expiresAt > now;
+      });
+      return { keys: names.map((name) => ({ name })), list_complete: true, cursor: undefined };
+    },
     _map: map,
   };
 }

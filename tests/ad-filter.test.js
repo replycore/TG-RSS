@@ -30,6 +30,10 @@ function mockEnv(channels) {
       },
       async put(key, value) { store.set(key, value); },
       async delete(key) { store.delete(key); },
+      async list({ prefix = "" } = {}) {
+        const names = [...store.keys()].filter((k) => k.startsWith(prefix));
+        return { keys: names.map((name) => ({ name })), list_complete: true, cursor: undefined };
+      },
     },
   };
 }

@@ -13,6 +13,7 @@ import {
   KEYS,
   DEFAULTS,
   getAdminCredential,
+  migrateLegacyPrivateKeys,
 } from "../store.js";
 import {
   getAuthState,
@@ -99,6 +100,7 @@ export async function rssTokenAction(request, env, body) {
 
 export async function getSettings(request, env) {
   await requireAdmin(request, env);
+  await migrateLegacyPrivateKeys(env); // 旧私密 key（p<数字>）→ priv:-<数字>，幂等
   const [general, mediaSettings, channels, bridge, credential] = await Promise.all([
     getGeneral(env),
     getMediaSettings(env),
@@ -125,6 +127,7 @@ export async function getSettings(request, env) {
 
 export async function saveSettings(request, env, body) {
   await requireAdmin(request, env);
+  await migrateLegacyPrivateKeys(env); // 先迁存量 key，再校验/保存，避免新旧混写
   const errors = [];
   // 待写入项：先全部校验，只有 errors 为空才落盘——
   // 否则非法值（如坏桥接地址）会先写进 KV 再抛 400，

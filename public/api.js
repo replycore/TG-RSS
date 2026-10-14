@@ -27,6 +27,29 @@ reg("api", {
   err_proxy_rate_limited: { zh: "代理请求过于频繁", en: "Proxy requests too frequent" },
   err_media_not_found: { zh: "媒体不存在", en: "Media not found" },
   err_media_upstream_error: { zh: "媒体获取失败", en: "Media fetch failed" },
+  // 以下为服务端静态文案码。故意未收录的 5 个动态文案码（bad_channel / bridge_denied /
+  // bridge_error / bridge_unreachable / upstream_status）带诊断细节（校验原因、NTP 时钟差、
+  // 上游状态码），进静态表会丢信息，故保留回退服务端原文。
+  err_already_initialized: { zh: "管理员已初始化，无法重复初始化", en: "Already initialized" },
+  err_bad_action: { zh: "action 必须是 rotate 或 revoke", en: "action must be rotate or revoke" },
+  err_bad_json: { zh: "请求体 JSON 无效", en: "Invalid JSON request body" },
+  err_bad_post: { zh: "post 参数非法", en: "Invalid post parameter" },
+  err_bad_proxy_sig: { zh: "媒体代理链接未签名或签名无效", en: "Media proxy link is unsigned or has an invalid signature" },
+  err_bad_redirect: { zh: "上游返回了无法解析的重定向", en: "Upstream returned an unparsable redirect" },
+  err_bad_redirect_scheme: { zh: "重定向目标仅允许 https", en: "Redirect target must use https" },
+  err_bad_scheme: { zh: "仅支持 http/https 媒体地址", en: "Only http/https media URLs are supported" },
+  err_bad_setup_code: { zh: "初始化码不正确", en: "Incorrect setup code" },
+  err_bad_type: { zh: "type 必须是 video/image/audio/file", en: "type must be video/image/audio/file" },
+  err_bad_url: { zh: "缺少 u 参数", en: "Missing u parameter" },
+  err_bad_username: { zh: "用户名仅允许字母数字 . _ -", en: "Username may only contain letters, digits, . _ -" },
+  err_bridge_not_configured: { zh: "尚未配置私密频道桥接服务", en: "Private-channel bridge is not configured" },
+  err_channel_disabled: { zh: "频道已停用", en: "Channel is disabled" },
+  err_env_managed: { zh: "当前使用环境变量 ADMIN_PASSWORD，请修改环境变量而非数据库凭据", en: "ADMIN_PASSWORD is set via environment variable; change it there instead" },
+  err_host_not_allowed: { zh: "该媒体地址不在白名单内", en: "This media URL is not in the allowlist" },
+  err_html_not_allowed: { zh: "上游返回了 HTML 页面，已拒绝代理", en: "Upstream returned an HTML page; proxying refused" },
+  err_redirect_not_allowed: { zh: "重定向目标不在白名单内", en: "Redirect target is not in the allowlist" },
+  err_too_large: { zh: "媒体体积超过限制", en: "Media exceeds the size limit" },
+  err_too_many_redirects: { zh: "上游重定向次数过多", en: "Too many upstream redirects" },
 });
 
 export class ApiError extends Error {
@@ -83,12 +106,14 @@ export const api = {
     request(
       `/api/feed${cursorQuery(cursors)}${tag ? `${cursorQuery(cursors) ? "&" : "?"}tag=${encodeURIComponent(tag)}` : ""}`,
     ),
-  posts: (key, before, tag) =>
-    request(
-      `/api/channels/${encodeURIComponent(key)}/posts?limit=20${before ? `&before=${encodeURIComponent(before)}` : ""}${
-        tag ? `&tag=${encodeURIComponent(tag)}` : ""
-      }`,
-    ),
+  posts: (key, before, tag) => {
+    // limit 不传：服务端 content.js 用 clampInt(limit, 5, 50, pageSize)，缺省才跟随"每页消息数"设置
+    const q = new URLSearchParams();
+    if (before) q.set("before", before);
+    if (tag) q.set("tag", tag);
+    const qs = q.toString();
+    return request(`/api/channels/${encodeURIComponent(key)}/posts${qs ? `?${qs}` : ""}`);
+  },
   media: ({ type, cursors, key, limit } = {}) => {
     const q = new URLSearchParams({ type: type || "video" });
     if (key) q.set("key", key);

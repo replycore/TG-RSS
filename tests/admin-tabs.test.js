@@ -161,3 +161,97 @@ test("语言切换后重建：tab 文案跟随新语言（防顶层 t() 一次�
 test.after(() => {
   globalThis.fetch = realFetch;
 });
+
+test("formDirty：输入后脏、切 tab 清零（旧 tab 输入已随重建丢失）", async () => {
+  const html = await readFile(path.join(dir, "..", "public", "index.html"), "utf8");
+  const body = /<body>([\s\S]*)<\/body>/.exec(html)?.[1] || "";
+  const window = new Window({
+    url: "http://localhost:8787/#/admin/general",
+    settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true },
+  });
+  window.document.body.innerHTML = body;
+  globalThis.window = window;
+  globalThis.document = window.document;
+  globalThis.location = window.location;
+  globalThis.history = window.history;
+  globalThis.localStorage = window.localStorage;
+  globalThis.Node = window.Node;
+  globalThis.CustomEvent = window.CustomEvent;
+  const replaced = [];
+  const origReplace = window.history.replaceState.bind(window.history);
+  window.history.replaceState = (st, t, url) => { replaced.push(String(url)); try { origReplace(st, t, url); } catch {} };
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    const jsonRes = (data) => ({
+      ok: true, status: 200,
+      headers: { get: (k) => (/content-type/i.test(String(k)) ? "application/json" : null) },
+      json: async () => data,
+    });
+    if (url.includes("/api/admin/state")) return jsonRes({ initialized: true, authenticated: true, username: "admin", credentialSource: "kv", envManaged: false, hasBridge: false });
+    if (url.includes("/api/admin/settings")) return jsonRes(SETTINGS);
+    throw new Error(`未预期的请求：${url}`);
+  };
+  const v = `dirty-tab-${Date.now()}`;
+  const { renderAdmin, isAdminFormDirty } = await import(`../public/admin.js?v=${v}`);
+  const ctx = { state: { config: {}, authenticated: true, initialized: true }, go: () => {}, refreshAuth: () => {}, refreshChannels: async () => {}, applyTheme: () => {} };
+  const root = document.getElementById("app") || document.createElement("div");
+  root.id = "app";
+  if (!root.parentElement) document.body.append(root);
+  await renderAdmin(root, ctx, "general");
+  assert.equal(isAdminFormDirty(), false, "初始渲染应不脏");
+  const input = root.querySelector(".card .field input");
+  assert.ok(input, "常规页应有输入框");
+  input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  assert.equal(isAdminFormDirty(), true, "输入后应为脏");
+  tabLink(root, "媒体").dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  assert.ok(root.querySelector(".card h2")?.textContent.includes("媒体"), "应已切到媒体 tab");
+  assert.equal(isAdminFormDirty(), false, "切 tab 后 dirty 应清零（旧 tab 输入已丢失）");
+});
+
+test("formDirty：频道保存成功后清零", async () => {
+  const html = await readFile(path.join(dir, "..", "public", "index.html"), "utf8");
+  const body = /<body>([\s\S]*)<\/body>/.exec(html)?.[1] || "";
+  const window = new Window({
+    url: "http://localhost:8787/#/admin/channels",
+    settings: { disableJavaScriptFileLoading: true, disableCSSFileLoading: true },
+  });
+  window.document.body.innerHTML = body;
+  globalThis.window = window;
+  globalThis.document = window.document;
+  globalThis.location = window.location;
+  globalThis.history = window.history;
+  globalThis.localStorage = window.localStorage;
+  globalThis.Node = window.Node;
+  globalThis.CustomEvent = window.CustomEvent;
+  let saved = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    const jsonRes = (data) => ({
+      ok: true, status: 200,
+      headers: { get: (k) => (/content-type/i.test(String(k)) ? "application/json" : null) },
+      json: async () => data,
+    });
+    if (url.includes("/api/admin/state")) return jsonRes({ initialized: true, authenticated: true, username: "admin", credentialSource: "kv", envManaged: false, hasBridge: false });
+    if (url.includes("/api/admin/settings") && (init.method || "GET") === "GET") return jsonRes(SETTINGS);
+    if (url.includes("/api/admin/settings") && (init.method || "GET") === "POST") { saved++; return jsonRes({ ok: true }); }
+    throw new Error(`未预期的请求：${url} ${init.method || "GET"}`);
+  };
+  const v = `dirty-save-${Date.now()}`;
+  const { renderAdmin, isAdminFormDirty } = await import(`../public/admin.js?v=${v}`);
+  const ctx = { state: { config: {}, authenticated: true, initialized: true }, go: () => {}, refreshAuth: () => {}, refreshChannels: async () => {}, applyTheme: () => {} };
+  const root = document.getElementById("app") || document.createElement("div");
+  root.id = "app";
+  if (!root.parentElement) document.body.append(root);
+  await renderAdmin(root, ctx, "channels");
+  // 频道列表为空时仍有"添加频道"输入框：输入置脏
+  const input = root.querySelector(".card .field input, .card input");
+  assert.ok(input, "频道页应有输入框");
+  input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  assert.equal(isAdminFormDirty(), true, "输入后应为脏");
+  const saveBtn = [...root.querySelectorAll("button")].find((b) => b.textContent.includes("保存全部修改"));
+  assert.ok(saveBtn, "应有保存全部修改按钮");
+  saveBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(saved, 1, "应保存一次");
+  assert.equal(isAdminFormDirty(), false, "频道保存成功后 dirty 应清零");
+});

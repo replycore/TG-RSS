@@ -40,6 +40,9 @@ const CACHED_AT = "x-cache-stored-at";
 // 7 天上限必须对这个原始时间算，否则每次兜底都刷新时间戳、上限永远不触发
 const ORIGINAL_AT = "x-cache-original-at";
 
+/** 单飞去重：并发同 URL 的上游请求共享同一个 fetch promise，settled 后删除 */
+const inflight = new Map();
+
 async function cachedFetch(upstream, ttl, ctx) {
   const cache = getCache();
   const cacheKey = new Request(`https://tg-rss-cache.invalid/${encodeURIComponent(upstream)}`, {
@@ -53,22 +56,40 @@ async function cachedFetch(upstream, ttl, ctx) {
         // 命中后自校验 age：边缘可能返回已过期条目，按 ttl 重新回源
         const storedAt = Number(hit.headers.get(CACHED_AT));
         const ageSec = storedAt > 0 ? (Date.now() - storedAt) / 1000 : 0;
-        if (Number.isFinite(storedAt) && storedAt > 0 && ageSec <= ttl) return withUpMarker(hit, "HIT");
+        if (Number.isFinite(storedAt) && storedAt > 0 && ageSec <= ttl) return { res: withUpMarker(hit, "HIT"), commitCache: null };
         // 过期：留作 stale 兜底（上限7天，对内容原始写入时间算——serveStale 会刷新 stored-at，
         // 用它判会让每次兜底都重置上限；太旧的内容宁可报错也不展示）
         const originalAt = Number(hit.headers.get(ORIGINAL_AT) || hit.headers.get(CACHED_AT));
         const origAgeSec = originalAt > 0 ? (Date.now() - originalAt) / 1000 : 0;
-        if (Number.isFinite(originalAt) && originalAt > 0 && origAgeSec <= 7 * 86400) stale = hit;
-        try { await cache.delete(cacheKey); } catch { /* ignore */ }
+        if (Number.isFinite(originalAt) && originalAt > 0 && origAgeSec <= 7 * 86400) {
+          stale = hit;
+          // 关键：这里不再 delete。404 等不走兜底的路径也需要旧条目留给后续 429；
+          // 新 200 响应解析成功后由 commitCache put 覆盖。删早了，一次瞬态 404 就永久
+          // 毁掉 7 天兜底副本。
+        } else {
+          // 超过 7 天兜底上限：彻底删除，避免死条目永久占用
+          try { await cache.delete(cacheKey); } catch { /* ignore */ }
+        }
       }
     } catch {
       /* ignore */
     }
   }
 
-  let res;
-  try {
-    res = await fetch(upstream, {
+  // 单飞：并发同 URL 请求共享进行中的上游 fetch，各自拿 clone 分支（body 只能消费一次）
+  const fetchKey = `fetch:${cacheKey.url}`;
+  async function doUpstreamFetch() {
+    const existing = inflight.get(fetchKey);
+    if (existing) {
+      try {
+        const shared = await existing;
+        // 非 Response 形态的 mock（无 clone，如部分单测）直接复用原对象
+        return typeof shared.clone === "function" ? shared.clone() : shared;
+      } catch {
+        // 共享响应已不可用（settled 清理间隙），降级为独立请求
+      }
+    }
+    const p = fetch(upstream, {
       headers: {
         "user-agent": UA,
         "accept-language": "en-US,en;q=0.9",
@@ -76,36 +97,53 @@ async function cachedFetch(upstream, ttl, ctx) {
       },
       redirect: "follow",
     });
+    inflight.set(fetchKey, p);
+    const cleanup = () => { if (inflight.get(fetchKey) === p) inflight.delete(fetchKey); };
+    p.then(cleanup, cleanup);
+    // 发起方也拿 clone 分支：原响应不直接消费，避免与后来者抢 body
+    const raw = await p;
+    return typeof raw.clone === "function" ? raw.clone() : raw;
+  }
+
+  let res;
+  try {
+    res = await doUpstreamFetch();
   } catch (err) {
     // stale-if-error：网络级失败也走旧缓存兜底
-    if (stale) return serveStale(stale, cacheKey, cache, ctx);
+    if (stale) return { res: await serveStale(stale, cacheKey, cache, ctx), commitCache: null };
     throw new HttpError(502, `上游请求失败：${err?.message || err}`, "upstream_error");
   }
 
   // stale-if-error：上游限流(429)/5xx → 旧缓存兜底（用户看到旧内容也比 503 报错强）。
-  // 404 等客户端错误照常透传（频道不存在必须如实报）。
+  // 404 等客户端错误照常透传（频道不存在必须如实报），但旧条目保留给后续 429 兜底。
   if (stale && (res.status === 429 || res.status >= 500)) {
     try { res.body?.cancel?.(); } catch { /* ignore */ }
-    return serveStale(stale, cacheKey, cache, ctx);
+    return { res: await serveStale(stale, cacheKey, cache, ctx), commitCache: null };
   }
 
-  if (cache && ttl > 0 && res.ok && res.status === 200) {
+  // 缓存写入推迟到解析成功后：200 但解析失败（如 t.me 返回首页 200）不能覆盖掉 stale。
+  // 调用方（fetchPublicChannelPage）在 parseChannelPage 成功后调 commitCache() 落盘。
+  let commitCache = null;
+  // 非 Response 形态的 mock（无 clone）跳过缓存写入，与 withUpMarker 的兼容策略一致
+  if (cache && ttl > 0 && res.ok && res.status === 200 && typeof res.clone === "function") {
     const clone = res.clone();
-    const stored = stripHopHeaders(clone, clone.body);
-    // N-2：必须 public——CF Cache API 对 private 语义的响应直接拒存（413），
-    // 写 private 会让缓存静默全失效（命中率归零，全部回源 t.me）。
-    // 该缓存只存公开频道 t.me/s 预览页、仅供内部解析从不回给浏览器，public 无泄露面。
-    stored.headers.set("cache-control", `public, max-age=${Math.floor(ttl)}`);
-    stored.headers.set(CACHED_AT, String(Date.now()));
-    const done = cache.put(cacheKey, stored).catch((err) => {
-      // N-2：缓存写失败只降级为回源，但必须留痕（此前静默吞掉导致命中率归零无人察觉）
-      console.error("[cachedFetch] cache.put failed:", err && err.message ? err.message : err);
-    });
-    if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(done);
-    else await done;
+    commitCache = async () => {
+      const stored = stripHopHeaders(clone, clone.body);
+      // N-2：必须 public——CF Cache API 对 private 语义的响应直接拒存（413），
+      // 写 private 会让缓存静默全失效（命中率归零，全部回源 t.me）。
+      // 该缓存只存公开频道 t.me/s 预览页、仅供内部解析从不回给浏览器，public 无泄露面。
+      stored.headers.set("cache-control", `public, max-age=${Math.floor(ttl)}`);
+      stored.headers.set(CACHED_AT, String(Date.now()));
+      const done = cache.put(cacheKey, stored).catch((err) => {
+        // N-2：缓存写失败只降级为回源，但必须留痕（此前静默吞掉导致命中率归零无人察觉）
+        console.error("[cachedFetch] cache.put failed:", err && err.message ? err.message : err);
+      });
+      if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(done);
+      else await done;
+    };
   }
   // 出口打标：有缓存层且未命中 = MISS；ttl=0 或缓存不可用 = BYPASS
-  return withUpMarker(res, cache && ttl > 0 ? "MISS" : "BYPASS");
+  return { res: withUpMarker(res, cache && ttl > 0 ? "MISS" : "BYPASS"), commitCache };
 }
 
 /* stale-if-error 出口：上游故障时把过期旧副本重新放回缓存（60s 冷却），
@@ -153,7 +191,7 @@ export function publicChannelUrl(username, before) {
 
 export async function fetchPublicChannelPage(env, ctx, username, before = null, ttl = 120) {
   const url = publicChannelUrl(username, before);
-  const res = await cachedFetch(url, ttl, ctx);
+  const { res, commitCache } = await cachedFetch(url, ttl, ctx);
   if (res.status === 404) throw new HttpError(404, "频道不存在", "channel_not_found");
   if (res.status === 429) throw new HttpError(429, "上游限流，请稍后再试", "rate_limited");
   if (!res.ok) throw new HttpError(502, `抓取失败（HTTP ${res.status}）`, "upstream_error");
@@ -168,6 +206,9 @@ export async function fetchPublicChannelPage(env, ctx, username, before = null, 
       throw new HttpError(404, "频道不存在或不是公开频道", "channel_not_found");
     }
   }
+  // 解析成功后才把新响应写入缓存（覆盖旧条目）：200 但解析失败（如 t.me 返回首页）
+  // 不能覆盖掉 stale 兜底副本
+  if (commitCache) await commitCache();
   return parsed;
 }
 
@@ -339,7 +380,11 @@ export async function proxyUrlFor(targetUrl, settings) {
   let s = "";
   if (settings && settings._bridgeToken && settings._bridgeHost) {
     try {
-      if (new URL(targetUrl).hostname === settings._bridgeHost) s = `&sig=${await signProxyU(settings._bridgeToken, u)}`;
+      if (new URL(targetUrl).hostname === settings._bridgeHost) {
+        // 签名带 7 天过期：RSS 令牌轮换/吊销后，已发出的旧 URL 最多再活 7 天
+        const exp = Math.floor(Date.now() / 1000) + 7 * 86400;
+        s = `&sig=${await signProxyU(settings._bridgeToken, u, exp)}&exp=${exp}`;
+      }
     } catch {
       /* 非法 URL 不签名，proxyMedia 会走 host 白名单拒绝 */
     }

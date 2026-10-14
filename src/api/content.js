@@ -264,7 +264,10 @@ export async function getFeed(request, env, ctx, url, authenticated) {
         nextCursors[ch.key] = page.next ? String(page.next) : null;
         perChannel.push({ channel: page.info, posts: page.posts, cacheStatus: page.cacheStatus || null });
       } catch (err) {
-        nextCursors[ch.key] = null; // 出错的频道本次不再重试，避免整页失败
+        // 出错的频道本次不再重试，避免整页失败。但游标不能写成 null（null = 已翻完），
+        // 否则瞬时上游错误会导致本轮分页永久丢内容：恢复原游标，下次仍可继续翻
+        if (typeof cursors[ch.key] === "string") nextCursors[ch.key] = cursors[ch.key];
+        else delete nextCursors[ch.key];
         perChannel.push({ channel: { key: ch.key, name: ch.name }, posts: [], error: err?.message || "fetch_failed" });
       }
     }),

@@ -9,8 +9,8 @@
  * - 令牌只被 RSS 端点消费，不参与任何其它接口的鉴权，泄露面收敛在订阅输出；
  * - 未配置令牌时公开行为完全不变；配置后私密/隐藏频道才可能出现在带 token 的源里。
  */
-import { readJSON, writeJSON, deleteKey, KEYS } from "./store.js";
-import { sha256Hex, timingSafeEqual, randomToken, getClientIp, HttpError } from "./util.js";
+import { readJSON, writeJSON, deleteKey, KEYS, countBucketKeys } from "./store.js";
+import { sha256Hex, timingSafeEqual, randomToken, getClientIp, HttpError, nowSec, randomHex } from "./util.js";
 
 const FAIL_MAX = 20; // 每 IP 每分钟允许的错误令牌次数
 const FAIL_WINDOW = 60; // 秒
@@ -63,17 +63,13 @@ function failConsumeMemory(ip) {
 async function failConsume(env, ip) {
   const mem = failConsumeMemory(ip);
   if (!mem.allowed) return mem;
-  const key = KEYS.rssTokenLimit + ip;
-  const rec = (await readJSON(env, key, null)) || { count: 0, exp: Math.floor(Date.now() / 1000) + FAIL_WINDOW };
-  const nowSec = Math.floor(Date.now() / 1000);
-  if (rec.exp < nowSec) {
-    rec.count = 0;
-    rec.exp = nowSec + FAIL_WINDOW;
-  }
-  rec.count += 1;
-  await writeJSON(env, key, rec, { expirationTtl: FAIL_WINDOW });
-  if (rec.count > FAIL_MAX) {
-    return { allowed: false, retryAfter: Math.max(1, rec.exp - nowSec) };
+  // 跨 isolate 安全：每次记账写独立 key（随机后缀），TTL=窗口秒数；
+  // 检查时按前缀 list 聚合，不再做 read→+1→write（旧实现跨 isolate 丢更新）
+  const stamp = `${Date.now().toString(36)}-${randomHex(4)}`;
+  await writeJSON(env, `${KEYS.rssTokenLimit}${ip}:${stamp}`, { exp: nowSec() + FAIL_WINDOW }, { expirationTtl: FAIL_WINDOW });
+  const { count, exp } = await countBucketKeys(env, KEYS.rssTokenLimit + ip + ":");
+  if (count > FAIL_MAX) {
+    return { allowed: false, retryAfter: Math.max(1, exp - nowSec()) };
   }
   return { allowed: true };
 }

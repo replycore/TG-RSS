@@ -107,7 +107,9 @@ export function normalizeChannel(input) {
   // 历史正数脏数据归一化：Telegram 频道 ID 为负数形式，正数会被桥接端判成 PeerUser
   // （validateChannel 已拒绝新增正数，这里兜住存量数据的读/存）
   const tgIdNormalized = type === "private" && /^\d+$/.test(tgId) ? `-${tgId}` : tgId;
-  const key = type === "public" ? username.toLowerCase() : `p${tgIdNormalized.replace(/^-/, "")}`;
+  // 私密 key 带类型命名空间：旧格式 p<无符号数字> 会与公开用户名 p<数字> 撞 key
+  // （如公开 p12345 vs 私密 -12345），新格式 priv:-100… 保留前导负号
+  const key = type === "public" ? username.toLowerCase() : `priv:${tgIdNormalized}`;
   return {
     key,
     type,
@@ -139,8 +141,7 @@ export function validateChannel(input) {
     return { channel: normalizeChannel({ ...input, type, username }) };
   }
   const tgId = String(input.tgId || "").trim();
-  // 必须带负号：Telegram 频道 ID 恒为负数形式（-100…）。正数与负数会归一化成
-  // 同一个 key（p<无符号>），± 同时存在时报「频道重复」；且正数发给桥接端
+  // 必须带负号：Telegram 频道 ID 恒为负数形式（-100…）。正数发给桥接端
   // 会被 teleproto 判成 PeerUser，peer 解析必然失败
   if (!/^-\d{5,25}$/.test(tgId)) {
     return { error: "私密频道需要负数数字 ID（形如 -1001234567890）；正数会被桥接端误判为用户" };
@@ -159,6 +160,37 @@ export async function getChannelMeta(env, key) {
 
 export async function putChannelMeta(env, key, meta) {
   await writeJSON(env, KEYS.meta + key, meta, { expirationTtl: 30 * 24 * 3600 });
+}
+
+/* ------------------------------------------------------ 存量私密 key 迁移 */
+
+// 旧私密 key 格式：p<无符号数字>（如 p1001234567890），与公开用户名 p<数字> 撞命名空间。
+// 新格式为 priv:-100…。迁移把该频道 key 下的全部 KV 数据拷贝到新 key 后删旧 key，
+// 并更新频道列表。幂等：无 legacy key 时是 no-op。
+const LEGACY_PRIVATE_KEY_RE = /^p\d+$/;
+const META_TTL = 30 * 24 * 3600;
+
+export async function migrateLegacyPrivateKeys(env) {
+  const list = await readJSON(env, KEYS.channels, null);
+  if (!Array.isArray(list) || list.length === 0) return { migrated: 0 };
+  let migrated = 0;
+  for (const ch of list) {
+    if (!ch || ch.type !== "private" || typeof ch.key !== "string" || !LEGACY_PRIVATE_KEY_RE.test(ch.key)) {
+      continue;
+    }
+    const newKey = normalizeChannel(ch).key; // priv:-100…（读路径同样归一化，保证一致）
+    if (newKey === ch.key) continue;
+    // 该频道 key 下的 KV 数据：目前只有 channel:meta2:（grep 全仓库确认无其它前缀）
+    const oldMeta = await readJSON(env, KEYS.meta + ch.key, null);
+    if (oldMeta != null) {
+      await writeJSON(env, KEYS.meta + newKey, oldMeta, { expirationTtl: META_TTL });
+      await deleteKey(env, KEYS.meta + ch.key);
+    }
+    ch.key = newKey;
+    migrated += 1;
+  }
+  if (migrated > 0) await writeJSON(env, KEYS.channels, list);
+  return { migrated };
 }
 
 /* -------------------------------------------------------------- 管理员凭据 */
@@ -225,6 +257,8 @@ export async function getAuthEpoch(env) {
 }
 
 export async function bumpAuthEpoch(env) {
+  // 语义说明：epoch 只需单调变化（让旧会话在下次 getSession 时失效），不保证精确 +N。
+  // 并发改密码时多次 bump 可能 collapse 成 +1，这是可接受的——失效旧会话的目的照样达到。
   const next = (await getAuthEpoch(env)) + 1;
   await writeJSON(env, AUTH_EPOCH_KEY, next);
   return next;
@@ -267,19 +301,43 @@ export async function destroySession(env, token) {
 
 /* 登录/初始化限流：8 次 / 5 分钟（KV 为跨实例兜底）
    第一层是进程内内存桶：同 isolate 内无竞态、零网络开销；
-   第二层 KV 计数采用「先记账后放行」的预扣语义，
-   避免旧实现「先检查、失败后才记账」窗口里并发请求绕过计数。 */
+   第二层 KV 记账采用「每请求独立 key + list 聚合」：并发请求各自写
+   auth:limit:{ip}:{随机}（TTL=窗口秒数），检查时按前缀 list 计数——
+   不再做 read→+1→write，跨 isolate 并发也不会丢更新。
+   保持「先记账后放行」的预扣语义，避免旧实现「先检查、失败后才记账」
+   窗口里并发请求绕过计数。 */
 const RATE_WINDOW = 300; // 5 分钟
 const RATE_MAX = 8;
 const memoryBuckets = new Map();
 
+/**
+ * 按前缀聚合独立记账 key：返回 { count, exp }。
+ * exp 取最早到期 key 的 exp，用于 retryAfter；无 key 时回退为「窗口结束」。
+ */
+export async function countBucketKeys(env, prefix) {
+  const store = kv(env);
+  let count = 0;
+  let earliestExp = 0;
+  let cursor;
+  for (;;) {
+    const page = await store.list({ prefix, cursor });
+    for (const k of page.keys || []) {
+      count += 1;
+      const v = await store.get(k.name, "json").catch(() => null);
+      const exp = Number(v && v.exp) || 0;
+      if (exp && (!earliestExp || exp < earliestExp)) earliestExp = exp;
+    }
+    if (page.list_complete) break;
+    cursor = page.cursor;
+    if (cursor == null) break;
+  }
+  return { count, exp: earliestExp || nowSec() + RATE_WINDOW };
+}
+
 export async function checkRateLimit(env, ip) {
-  const key = KEYS.rateLimit + ip;
-  const rec = await readJSON(env, key, null);
-  if (!rec) return { allowed: true, remaining: RATE_MAX };
-  if (rec.exp && rec.exp < nowSec()) return { allowed: true, remaining: RATE_MAX };
-  if (rec.count >= RATE_MAX) return { allowed: false, remaining: 0, retryAfter: (rec.exp || 0) - nowSec() };
-  return { allowed: true, remaining: RATE_MAX - rec.count };
+  const { count, exp } = await countBucketKeys(env, KEYS.rateLimit + ip + ":");
+  if (count >= RATE_MAX) return { allowed: false, remaining: 0, retryAfter: Math.max(1, exp - nowSec()) };
+  return { allowed: true, remaining: RATE_MAX - count };
 }
 
 function memoryConsume(ip) {
@@ -310,18 +368,24 @@ export async function consumeRateLimit(env, ip) {
 }
 
 export async function bumpRateLimit(env, ip) {
-  const key = KEYS.rateLimit + ip;
-  const rec = (await readJSON(env, key, null)) || { count: 0, exp: nowSec() + RATE_WINDOW };
-  if (rec.exp < nowSec()) {
-    rec.count = 0;
-    rec.exp = nowSec() + RATE_WINDOW;
-  }
-  rec.count += 1;
-  await writeJSON(env, key, rec, { expirationTtl: RATE_WINDOW });
-  return rec;
+  // 跨 isolate 安全：每次记账写独立 key（随机后缀防并发同名），TTL=窗口秒数；
+  // 返回值沿用 { count, exp } 形状，供 consumeRateLimit 判定
+  const stamp = `${Date.now().toString(36)}-${randomHex(4)}`;
+  await writeJSON(env, `${KEYS.rateLimit}${ip}:${stamp}`, { exp: nowSec() + RATE_WINDOW }, { expirationTtl: RATE_WINDOW });
+  return countBucketKeys(env, KEYS.rateLimit + ip + ":");
 }
 
 export async function resetRateLimit(env, ip) {
   memoryBuckets.delete(ip);
-  await deleteKey(env, KEYS.rateLimit + ip);
+  // 旧格式单 key（升级前数据）顺手清理
+  await deleteKey(env, KEYS.rateLimit + ip).catch(() => {});
+  const store = kv(env);
+  let cursor;
+  for (;;) {
+    const page = await store.list({ prefix: KEYS.rateLimit + ip + ":", cursor });
+    for (const k of page.keys || []) await store.delete(k.name).catch(() => {});
+    if (page.list_complete) break;
+    cursor = page.cursor;
+    if (cursor == null) break;
+  }
 }

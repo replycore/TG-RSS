@@ -19,6 +19,10 @@ class MockKV {
   }
   async put(key, value) { this.map.set(key, String(value)); }
   async delete(key) { this.map.delete(key); }
+  async list({ prefix = "" } = {}) {
+    const names = [...this.map.keys()].filter((k) => k.startsWith(prefix));
+    return { keys: names.map((name) => ({ name })), list_complete: true, cursor: undefined };
+  }
 }
 
 async function authedReq(e) {

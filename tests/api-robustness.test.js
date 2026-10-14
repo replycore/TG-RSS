@@ -19,6 +19,10 @@ class MockKV {
   }
   async put(key, value) { this.map.set(key, String(value)); }
   async delete(key) { this.map.delete(key); }
+  async list({ prefix = "" } = {}) {
+    const names = [...this.map.keys()].filter((k) => k.startsWith(prefix));
+    return { keys: names.map((name) => ({ name })), list_complete: true, cursor: undefined };
+  }
 }
 
 test("proxyMedia：脏 bridge.url（https:）不 500，按白名单拒绝", async () => {
@@ -132,23 +136,34 @@ test("fetchBridgeFeed 401：按 bridge 自报的 windowSec 判定时钟差，写
   }
 });
 
-test("H-1：代理 URL 签名往返 + 篡改/缺签/错 token 拒绝", async () => {
+test("H-1：代理 URL 签名往返 + 篡改/缺签/错 token/过期拒绝", async () => {
   const { signProxyU, verifyProxySig } = await import("../src/proxy-sign.js");
   const token = "bridge-token-abc";
   const u = Buffer.from("https://bridge.example.com/media?ch=-1001&m=5").toString("base64url");
-  const sig = await signProxyU(token, u);
+  const exp = String(Math.floor(Date.now() / 1000) + 7 * 86400);
+  const sig = await signProxyU(token, u, exp);
   assert.ok(sig, "应产出签名");
-  assert.equal(await verifyProxySig(token, u, sig), true, "合法签名应通过");
+  assert.equal(await verifyProxySig(token, u, sig, exp), true, "合法签名应通过");
   // 篡改 u（枚举改 ch/m）
   const tampered = Buffer.from("https://bridge.example.com/media?ch=-9999&m=1").toString("base64url");
-  assert.equal(await verifyProxySig(token, tampered, sig), false, "篡改 u 后签名必须失效");
+  assert.equal(await verifyProxySig(token, tampered, sig, exp), false, "篡改 u 后签名必须失效");
   // 错 token
-  assert.equal(await verifyProxySig("wrong-token", u, sig), false, "错 token 必须拒绝");
+  assert.equal(await verifyProxySig("wrong-token", u, sig, exp), false, "错 token 必须拒绝");
   // 缺签名
-  assert.equal(await verifyProxySig(token, u, null), false, "缺签名必须拒绝");
-  assert.equal(await verifyProxySig(token, u, ""), false, "空签名必须拒绝");
+  assert.equal(await verifyProxySig(token, u, null, exp), false, "缺签名必须拒绝");
+  assert.equal(await verifyProxySig(token, u, "", exp), false, "空签名必须拒绝");
+  // 无 exp / 非法 / 过期 → 拒绝（旧签发 URL 无 exp，直接 403）
+  assert.equal(await verifyProxySig(token, u, sig, null), false, "缺 exp 必须拒绝");
+  assert.equal(await verifyProxySig(token, u, sig, ""), false, "空 exp 必须拒绝");
+  assert.equal(await verifyProxySig(token, u, sig, "not-a-number"), false, "非法 exp 必须拒绝");
+  const expired = String(Math.floor(Date.now() / 1000) - 60);
+  const sigExpired = await signProxyU(token, u, expired);
+  assert.equal(await verifyProxySig(token, u, sigExpired, expired), false, "过期的签名必须拒绝");
+  // exp 被篡改（延长）→ 签名载荷对不上，拒绝
+  const forgedExp = String(Math.floor(Date.now() / 1000) + 365 * 86400);
+  assert.equal(await verifyProxySig(token, u, sig, forgedExp), false, "篡改 exp 必须拒绝");
   // token 空 → 不签名（返回空串），验签也拒绝
-  assert.equal(await signProxyU("", u), "", "token 空不签名");
+  assert.equal(await signProxyU("", u, exp), "", "token 空不签名");
 });
 
 test("N-1 端到端：proxyUrlFor 生成的 URL 必须被 proxyMedia 放行（参数名 s/sig 一致性）", async () => {
