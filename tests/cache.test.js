@@ -84,3 +84,75 @@ test("N-2：ttl=0 标 BYPASS 且不写缓存", async () => {
     assert.equal(cfCache.store.size, 0, "ttl=0 不应写缓存");
   });
 });
+
+/** 把 store 里的条目改成已过期（age=1h）但仍在7天兜底窗内（保留原 body） */
+async function expireEntry(cfCache, ageMs) {
+  const key = [...cfCache.store.keys()][0];
+  const old = cfCache.store.get(key);
+  const body = Buffer.from(await old.arrayBuffer());
+  const headers = new Headers(old.headers);
+  headers.set("x-cache-stored-at", String(Date.now() - ageMs));
+  cfCache.store.set(key, new Response(body, { status: old.status, headers }));
+  return key;
+}
+
+test("stale-if-error：上游429时服旧缓存（STALE），冷却期内二次请求直接 HIT 不再打上游", async () => {
+  const cfCache = makeCFCache();
+  let upstreamCalls = 0;
+  let upstreamMode = "ok";
+  await withGlobals({ default: cfCache }, async () => {
+    upstreamCalls += 1;
+    if (upstreamMode === "rate") return new Response("rate limited", { status: 429 });
+    return new Response(pageHtml, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+  }, async () => {
+    const first = await fetchPublicChannelPage({}, {}, "tgtest", null, 120);
+    assert.equal(first.cacheStatus, "MISS");
+
+    await expireEntry(cfCache, 3600 * 1000); // 过期1小时（ttl 120s → 需回源）
+    upstreamMode = "rate";
+
+    const staleRes = await fetchPublicChannelPage({}, {}, "tgtest", null, 120);
+    assert.equal(staleRes.cacheStatus, "STALE", "上游429时应返回旧缓存并标 STALE");
+    assert.ok(staleRes.posts.length > 0, "旧内容应完整可解析");
+    assert.equal(upstreamCalls, 2, "此时回源过一次");
+
+    // 冷却期（60s）内：旧副本被重新写入为新鲜 → HIT，不得再打上游
+    const cooled = await fetchPublicChannelPage({}, {}, "tgtest", null, 120);
+    assert.equal(cooled.cacheStatus, "HIT", "冷却期内二次请求应 HIT");
+    assert.equal(upstreamCalls, 2, "冷却期内不得再打上游（防快速切换连环限流）");
+  });
+});
+
+test("stale-if-error：上游404不走兜底（频道不存在必须如实报错）", async () => {
+  const cfCache = makeCFCache();
+  let upstreamMode = "ok";
+  await withGlobals({ default: cfCache }, async () => {
+    if (upstreamMode === "gone") return new Response("gone", { status: 404 });
+    return new Response(pageHtml, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+  }, async () => {
+    await fetchPublicChannelPage({}, {}, "tgtest", null, 120);
+    await expireEntry(cfCache, 3600 * 1000);
+    upstreamMode = "gone";
+    await assert.rejects(
+      () => fetchPublicChannelPage({}, {}, "tgtest", null, 120),
+      (err) => err.status === 404 && err.code === "channel_not_found",
+      "404 不得被 stale 兜底掩盖",
+    );
+  });
+});
+
+test("stale-if-error：网络级失败也走兜底（502→旧内容）", async () => {
+  const cfCache = makeCFCache();
+  let upstreamMode = "ok";
+  await withGlobals({ default: cfCache }, async () => {
+    if (upstreamMode === "dead") throw new TypeError("fetch failed");
+    return new Response(pageHtml, { status: 200, headers: { "content-type": "text/html; charset=utf-8" } });
+  }, async () => {
+    await fetchPublicChannelPage({}, {}, "tgtest", null, 120);
+    await expireEntry(cfCache, 3600 * 1000);
+    upstreamMode = "dead";
+    const res = await fetchPublicChannelPage({}, {}, "tgtest", null, 120);
+    assert.equal(res.cacheStatus, "STALE", "网络失败时应返回旧缓存");
+    assert.ok(res.posts.length > 0);
+  });
+});

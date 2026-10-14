@@ -17,7 +17,13 @@ let lang = "zh-CN";
 
 try {
   const saved = typeof localStorage !== "undefined" ? localStorage.getItem(STORAGE_KEY) : null;
-  if (saved === "en" || saved === "zh-CN") lang = saved;
+  if (saved === "en" || saved === "zh-CN") {
+    lang = saved;
+  } else if (typeof process === "undefined" && typeof navigator !== "undefined" && navigator.language) {
+    // 未手动选过时按浏览器语言初始化：en-* 用英文，其余（含 zh）用中文。
+    // 限定非 Node：Node 21+ 自带 navigator.language（en-US），在测试进程里会把默认语言带偏
+    lang = /^en(\b|-)/i.test(navigator.language) ? "en" : "zh-CN";
+  }
 } catch { /* 无 localStorage 环境保持默认 */ }
 
 export function getLang() {

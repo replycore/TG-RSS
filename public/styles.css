@@ -263,6 +263,10 @@ input::placeholder, textarea::placeholder {
 .post-head .ch { color: var(--accent-text); font-weight: 600; }
 .post-head .sep { opacity: .5; }
 .post-text { word-break: break-word; }
+/* 移动端防撑破视口：帖子内媒体/表格一律限宽，宽表格自身可横滑 */
+.post img, .post video, .post audio { max-width: 100%; }
+.post video { max-height: 60vh; }
+.post table { display: block; max-width: 100%; overflow-x: auto; }
 .post-text blockquote {
   margin: 8px 0;
   padding: 6px 12px;
@@ -525,12 +529,19 @@ audio { width: 100%; }
 }
 
 @media (max-width: 560px) {
-  .brand #site-title { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 顶栏在 ~390px 宽度会放不下：只留图标导航，品牌文字与徽标让位 */
+  .topbar { padding: 0 8px; }
+  .brand #site-title { display: none; }
+  .nav { gap: 2px; margin-left: 4px; }
+  .nav a, .nav .nav-tag-btn { padding: 6px 8px; }
+  .topbar-right { gap: 4px; }
   .channel-list li a { padding: 5px 8px; }
   .tag-bar { gap: 6px; margin-bottom: 10px; }
   .tag-chip { padding: 4px 10px; font-size: 12px; }
   .post { padding: 12px; }
   .view-head h1 { font-size: 18px; }
+  .media-grid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
+  .filecard { flex-wrap: wrap; }
 }
 
 /* 人机验证组件占位 */

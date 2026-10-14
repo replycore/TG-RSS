@@ -42,6 +42,7 @@ async function cachedFetch(upstream, ttl, ctx) {
   const cacheKey = new Request(`https://tg-rss-cache.invalid/${encodeURIComponent(upstream)}`, {
     method: "GET",
   });
+  let stale = null; // stale-if-error：过期但未超7天的旧副本，上游故障时兜底
   if (cache && ttl > 0) {
     try {
       const hit = await cache.match(cacheKey);
@@ -50,7 +51,8 @@ async function cachedFetch(upstream, ttl, ctx) {
         const storedAt = Number(hit.headers.get(CACHED_AT));
         const ageSec = storedAt > 0 ? (Date.now() - storedAt) / 1000 : 0;
         if (Number.isFinite(storedAt) && storedAt > 0 && ageSec <= ttl) return withUpMarker(hit, "HIT");
-        // 过期 → 删除并回源
+        // 过期：留作 stale 兜底（上限7天，太旧的内容宁可报错也不展示）
+        if (Number.isFinite(storedAt) && storedAt > 0 && ageSec <= 7 * 86400) stale = hit;
         try { await cache.delete(cacheKey); } catch { /* ignore */ }
       }
     } catch {
@@ -69,7 +71,16 @@ async function cachedFetch(upstream, ttl, ctx) {
       redirect: "follow",
     });
   } catch (err) {
+    // stale-if-error：网络级失败也走旧缓存兜底
+    if (stale) return serveStale(stale, cacheKey, cache, ctx);
     throw new HttpError(502, `上游请求失败：${err?.message || err}`, "upstream_error");
+  }
+
+  // stale-if-error：上游限流(429)/5xx → 旧缓存兜底（用户看到旧内容也比 503 报错强）。
+  // 404 等客户端错误照常透传（频道不存在必须如实报）。
+  if (stale && (res.status === 429 || res.status >= 500)) {
+    try { res.body?.cancel?.(); } catch { /* ignore */ }
+    return serveStale(stale, cacheKey, cache, ctx);
   }
 
   if (cache && ttl > 0 && res.ok && res.status === 200) {
@@ -89,6 +100,24 @@ async function cachedFetch(upstream, ttl, ctx) {
   }
   // 出口打标：有缓存层且未命中 = MISS；ttl=0 或缓存不可用 = BYPASS
   return withUpMarker(res, cache && ttl > 0 ? "MISS" : "BYPASS");
+}
+
+/* stale-if-error 出口：上游故障时把过期旧副本重新放回缓存（60s 冷却），
+   既让用户看到旧内容而不是报错，也避免快速切频道时每次请求都打上游触发连环限流 */
+const STALE_COOLDOWN_SEC = 60;
+
+async function serveStale(stale, cacheKey, cache, ctx) {
+  if (cache) {
+    try {
+      const stored = stripHopHeaders(stale.clone(), stale.clone().body);
+      stored.headers.set("cache-control", `public, max-age=${STALE_COOLDOWN_SEC}`);
+      stored.headers.set(CACHED_AT, String(Date.now()));
+      const done = cache.put(cacheKey, stored).catch(() => {});
+      if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(done);
+      else await done;
+    } catch { /* 兜底失败不影响返回旧内容 */ }
+  }
+  return withUpMarker(stale, "STALE");
 }
 
 /* N-2 可观测性：给 cachedFetch 的返回打上游缓存状态标（HIT/MISS/BYPASS），
