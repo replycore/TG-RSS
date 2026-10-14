@@ -57,6 +57,7 @@ async function renderAdminGeneral() {
   globalThis.history = window.history;
   globalThis.localStorage = window.localStorage;
   globalThis.Node = window.Node;
+  globalThis.CustomEvent = window.CustomEvent; // setLang 广播用（Node 自带 CustomEvent 与 happy-dom 不兼容）
   // happy-dom 可能缺 history.replaceState 行为——补最小桩记录调用
   const replaced = [];
   const origReplace = window.history.replaceState.bind(window.history);
@@ -70,7 +71,7 @@ async function renderAdminGeneral() {
   root.id = "app";
   if (!root.parentElement) document.body.append(root);
   await renderAdmin(root, ctx, "general");
-  return { window, root, captured, ctx, replaced };
+  return { window, root, captured, ctx, replaced, renderAdmin };
 }
 
 function tabLink(root, label) {
@@ -138,6 +139,23 @@ test("频道 tab：粘贴分享链接可直接添加（不被前端拦）", asyn
   const table = root.querySelector("table.table");
   assert.ok(table, "添加后应渲染频道表格（被拦时 channels 仍为空，不渲染表格）");
   assert.ok(table.textContent.includes("telegram"), "分享链接应被规范化为 username=telegram");
+});
+
+test("语言切换后重建：tab 文案跟随新语言（防顶层 t() 一次性求值钉死旧语言）", async () => {
+  const { root, ctx, renderAdmin } = await renderAdminGeneral();
+  tabLink(root, "常规"); // 初始中文
+
+  // 与 admin.js 引用同一 i18n 单例（均不带 query 的 ../i18n.js）
+  const { setLang } = await import("../public/i18n.js");
+  setLang("en");
+  try {
+    await renderAdmin(root, ctx, "general"); // 模拟 langchange 后的 route() 重建
+    tabLink(root, "General");
+    tabLink(root, "Channels");
+    tabLink(root, "Media");
+  } finally {
+    setLang("zh-CN"); // 复位，不污染后续用例
+  }
 });
 
 test.after(() => {

@@ -144,12 +144,13 @@ rssSingleHint: { zh: "单频道源：把链接换成 /api/rss?channel=<频道key
 });
 
 
+// 只存 labelKey，渲染时再 t()——语言切换会重建页签，顶层 t() 一次性求值会钉死旧语言
 const TABS = [
-  { key: "general", label: t("adm.tabGeneral") },
-  { key: "channels", label: t("adm.tabChannels") },
-  { key: "media", label: t("adm.tabMedia") },
-  { key: "bridge", label: t("adm.tabBridge") },
-  { key: "security", label: t("adm.tabSecurity") },
+  { key: "general", labelKey: "adm.tabGeneral" },
+  { key: "channels", labelKey: "adm.tabChannels" },
+  { key: "media", labelKey: "adm.tabMedia" },
+  { key: "bridge", labelKey: "adm.tabBridge" },
+  { key: "security", labelKey: "adm.tabSecurity" },
 ];
 
 /* 语言切换会 route() 重建表单——这里跟踪是否有未保存输入，供 app 壳 confirm 提示 */
@@ -202,7 +203,7 @@ export async function renderAdmin(root, ctx, tab = "general") {
     links[tb.key] = el("a", {
       href: `#/admin/${tb.key}`,
       class: tb.key === tab ? "active" : "",
-      text: tb.label,
+      text: t(tb.labelKey), // 渲染时取：语言切换重建才跟得上
       // Tab 切换不经过 hash 路由：只重绘下方 body 区，已拉取的 settings 复用，
       // 不再整页清空 + 重拉 adminState/settings（解决每次切 tab 都"刷新一次"的问题）
       onclick: (e) => {
