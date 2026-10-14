@@ -502,7 +502,8 @@ audio { width: 100%; }
 /* ---------------------------------------------------------------- 响应式 */
 
 @media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .app { min-width: 0; }
   #sidebar-toggle { display: inline-flex; }
   .sidebar {
     position: fixed; z-index: 60; top: var(--topbar-h); left: 0;
