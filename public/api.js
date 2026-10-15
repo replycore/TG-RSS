@@ -27,9 +27,15 @@ reg("api", {
   err_proxy_rate_limited: { zh: "代理请求过于频繁", en: "Proxy requests too frequent" },
   err_media_not_found: { zh: "媒体不存在", en: "Media not found" },
   err_media_upstream_error: { zh: "媒体获取失败", en: "Media fetch failed" },
-  // 以下为服务端静态文案码。故意未收录的 5 个动态文案码（bad_channel / bridge_denied /
-  // bridge_error / bridge_unreachable / upstream_status）带诊断细节（校验原因、NTP 时钟差、
-  // 上游状态码），进静态表会丢信息，故保留回退服务端原文。
+  // 动态文案码：服务端消息含诊断细节（校验原因、NTP 时钟差、上游状态码、底层错误）。
+  // 用 {msg} 占位符保留原文——zh 原样显示（与回退效果等价），en 显示英文框架+细节。
+  // 注意：这些词条必须带 {msg}，去掉会丢诊断信息（err-codes.test.js 有断言锁定）。
+  err_bad_channel: { zh: "{msg}", en: "Invalid channel configuration: {msg}" },
+  err_bridge_denied: { zh: "{msg}", en: "Bridge service denied access: {msg}" },
+  err_bridge_error: { zh: "{msg}", en: "Bridge service returned an error: {msg}" },
+  err_bridge_unreachable: { zh: "{msg}", en: "Bridge service unreachable: {msg}" },
+  err_upstream_status: { zh: "{msg}", en: "Upstream returned an error status: {msg}" },
+  // 以下为服务端静态文案码
   err_already_initialized: { zh: "管理员已初始化，无法重复初始化", en: "Already initialized" },
   err_bad_action: { zh: "action 必须是 rotate 或 revoke", en: "action must be rotate or revoke" },
   err_bad_json: { zh: "请求体 JSON 无效", en: "Invalid JSON request body" },
@@ -89,7 +95,8 @@ async function request(path, options = {}) {
     let message = data?.error || t("api.errWithCode", { code: res.status });
     if (data?.code) {
       const codeKey = `api.err_${data.code}`;
-      const localized = t(codeKey);
+      // 传 msg：动态文案码的词条用 {msg} 保留服务端诊断细节（其余词条无占位符，传了无害）
+      const localized = t(codeKey, { msg: data?.error || "" });
       if (localized !== codeKey) message = localized; // 有词条才替换，无词条保留服务端原文
     }
     const error = new ApiError(message, res.status, data?.code);
