@@ -4,6 +4,7 @@ import { t, reg } from "./i18n.js";
 
 reg("api", {
   networkError: { zh: "网络错误：{msg}", en: "Network error: {msg}" },
+  emptyResponse: { zh: "服务器返回了空响应，请重试", en: "Server returned an empty response, please retry" },
   errWithCode: { zh: "请求失败（HTTP {code}）", en: "Request failed (HTTP {code})" },
   // 服务端错误文案只有中文；en 模式按 err code 查这里，查不到回退服务端原文
   err_channel_not_found: { zh: "频道不存在", en: "Channel not found" },
@@ -102,6 +103,12 @@ async function request(path, options = {}) {
     const error = new ApiError(message, res.status, data?.code);
     error.retryAfter = res.headers.get("retry-after");
     throw error;
+  }
+  if (data == null) {
+    // 2xx 但 body 为空/非 JSON（body 流中途失败、边缘返回空包等）：不能把 null
+    // 抛给调用方（此前 views.js/media.js 的 data.cursors 直接炸 "null is not an object"），
+    // 按可重试的网络异常抛，调用方 catch 后出重试按钮
+    throw new ApiError(t("api.emptyResponse"), res.status, "empty_response");
   }
   return data;
 }

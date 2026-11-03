@@ -48,9 +48,9 @@ fAdTags: { zh: "自定义广告标签（逗号 / 空格 / 换行分隔）", en: 
 phAdTags: { zh: "如：福利, 返利, coupon", en: "e.g.: 福利, 返利, coupon" },
 adFilter: { zh: "广告过滤", en: "Ad Filtering" },
 adHint: { zh: "帖子正文带任一标签即全局隐藏（信息流 / 频道页 / RSS 均不投放）。内置标签不可删，自定义标签与内置取并集判定。", en: "Posts containing any tag are hidden globally (feed / channel pages / RSS). Built-in tags cannot be removed; custom tags are unioned with built-ins." },
-fAdKeywords: { zh: "自定义广告关键词（逗号 / 空格 / 换行分隔）", en: "Custom ad keywords (comma / space / newline separated)" },
+fAdKeywords: { zh: "自定义广告关键词（逗号 / 顿号 / 换行分隔）", en: "Custom ad keywords (comma / 、/ newline separated)" },
 phAdKeywords: { zh: "如：加V, 退款, freebie", en: "e.g.: addV, refund, freebie" },
-adKeywordsHint: { zh: "消息正文匹配任一关键词即隐藏。这些词在正常聊天中极少出现，误伤率低。内置标准词无需填写，可直接追加。", en: "Posts matching any keyword are hidden. These words rarely appear in normal chats, low false positive rate. Built-in keywords don't need to be added; extend as you wish." },
+adKeywordsHint: { zh: "消息正文匹配任一关键词即隐藏。这些词在正常聊天中极少出现，误伤率低。内置标准词无需填写，可直接追加。关键词内部可含空格（如 free gift），按子串匹配。", en: "Posts matching any keyword are hidden. These words rarely appear in normal chats, low false positive rate. Built-in keywords don't need to be added; extend as you wish. Keywords may contain spaces (e.g. free gift), matched as substrings." },
 adBuiltin: { zh: "内置标签：{tags}", en: "Built-in tags: {tags}" },
 chList: { zh: "频道列表", en: "Channels" },
 chHint: { zh: "支持粘贴分享链接（t.me/xxx、t.me/s/xxx、tg://resolve?domain=xxx）；显示名优先于 Telegram 原名；「隐藏」的频道仅登录后可见", en: "Paste share links (t.me/xxx, t.me/s/xxx, tg://resolve?domain=xxx); display name overrides the Telegram name; “hidden” channels are visible only after login" },
@@ -514,11 +514,12 @@ function parseAdTagsInput(raw) {
   return out;
 }
 
-/** 解析自定义广告关键词输入：逗号/空格/换行/顿号分隔，去重（大小写不敏感） */
+/** 解析自定义广告关键词输入：逗号/顿号/分号/换行分隔，去重（大小写不敏感）。
+ * 注意：空格不是分隔符——关键词内部可含空格（如 "free gift"），按子串匹配。 */
 function parseAdKeywordsInput(raw) {
   const seen = new Set();
   const out = [];
-  for (const part of String(raw || "").split(/[,\s，、;；\n]+/)) {
+  for (const part of String(raw || "").split(/[,，、;；\n]+/)) {
     const item = String(part ?? "").trim().slice(0, 64);
     if (!item) continue;
     const key = item.toLowerCase();

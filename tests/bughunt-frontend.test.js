@@ -216,3 +216,38 @@ test("桥接保存成功后状态行同步刷新", async () => {
   assert.ok(root.textContent.includes("已保存令牌。"), "保存成功后状态行应同步刷新");
   assert.ok(!root.textContent.includes("尚未设置令牌。"), "旧文案不应残留");
 });
+
+test("广告关键词：支持带空格的短语（空格不是分隔符）", async () => {
+  const { window, root } = await setupDom("#/admin/general");
+  let postBody = null;
+  globalThis.fetch = async (input, init = {}) => {
+    const u = String(input);
+    const method = init.method || "GET";
+    if (u.includes("/api/admin/state")) {
+      return jsonRes({ initialized: true, authenticated: true, username: "admin", credentialSource: "kv", envManaged: false, hasBridge: false });
+    }
+    if (u.includes("/api/admin/settings") && method === "GET") return jsonRes(freshSettings());
+    if (u.includes("/api/admin/settings") && method === "POST") {
+      postBody = JSON.parse(init.body);
+      return jsonRes({ ok: true, ...freshSettings() });
+    }
+    throw new Error(`未预期的请求：${u} ${method}`);
+  };
+  const { renderAdmin } = await import(`../public/admin.js?v=bughunt-kw-${Date.now()}`);
+  const ctx = { state: { config: {}, authenticated: true, initialized: true }, go: () => {}, refreshAuth: () => {}, refreshChannels: async () => {}, applyTheme: () => {} };
+  await renderAdmin(root, ctx, "general");
+
+  const kwInput = [...root.querySelectorAll(".card input")].find((i) => (i.placeholder || "").includes("加V"));
+  assert.ok(kwInput, "应有关键词输入框");
+  kwInput.value = "加微信, free gift,退款";
+  kwInput.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const saveBtn = [...root.querySelectorAll("button")].find((b) => b.textContent.includes("保存"));
+  assert.ok(saveBtn, "应有保存按钮");
+  saveBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await waitFor(() => postBody !== null && saveBtn.disabled === false, 3000);
+  assert.deepEqual(
+    postBody.general.adKeywords,
+    ["加微信", "free gift", "退款"],
+    `带空格的短语应保持完整，实际：${JSON.stringify(postBody.general.adKeywords)}`,
+  );
+});

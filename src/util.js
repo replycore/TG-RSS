@@ -531,15 +531,17 @@ export function containsAdKeywords(post, extraKeywords = []) {
 export function isAdPost(post, extraTags = [], extraKeywords = []) {
   // 1) tags 检测（保持原有逻辑）
   const tags = Array.isArray(post?.tags) ? post.tags : [];
-  if (!tags.length) return false;
-  const norm = (v) => normalizeTag(v);
-  const has = (needle) => tags.some((t) => norm(t) === needle);
-  if ([...AD_TAGS].some((needle) => has(needle))) return true;
-  if (!Array.isArray(extraTags)) return false;
-  for (const raw of extraTags) {
-    const needle = norm(raw);
-    if (needle && has(needle)) return true;
+  if (tags.length) {
+    const norm = (v) => normalizeTag(v);
+    const has = (needle) => tags.some((t) => norm(t) === needle);
+    if ([...AD_TAGS].some((needle) => has(needle))) return true;
+    if (!Array.isArray(extraTags)) return false;
+    for (const raw of extraTags) {
+      const needle = norm(raw);
+      if (needle && has(needle)) return true;
+    }
   }
-  // 2) 正文关键词检测（新增）
+  // 2) 正文关键词检测（无 tag 的帖子也要查：此前 if (!tags.length) return false
+  //  把关键词检测短路了，无 hashtag 的广告帖永远漏网）
   return containsAdKeywords(post, extraKeywords);
 }

@@ -144,7 +144,7 @@ export async function renderFeed(root, ctx) {
     more.setState({ disabled: true, label: t("views.loading") });
     try {
       const data = await api.feed(cursors, activeTag);
-      cursors = data.cursors || {};
+      cursors = data?.cursors || {};
       (data.channels || []).forEach((c) => { if (c?.key) channelMap[c.key] = c; });
       let added = 0;
       (data.posts || []).forEach((p) => {

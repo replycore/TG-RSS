@@ -101,7 +101,7 @@ export async function renderMedia(root, ctx, type = "video", channelKey = "") {
     more.setState({ disabled: true, label: t("media.loading") });
     try {
       const data = await api.media({ type, cursors, key: channelKey || undefined });
-      cursors = data.cursors || {};
+      cursors = data?.cursors || {};
       let added = 0;
       (data.items || []).forEach((item) => {
         if (seen.has(item.id)) return;

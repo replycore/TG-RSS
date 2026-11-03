@@ -72,3 +72,17 @@ test("是 AdPost 返回 false 当且仅当 tags 和正文均无匹配", () => {
   const post = { text: "经济日报", textPlain: "经济日报", tags: ["新闻"] };
   assert.equal(isAdPost(post, [], []), false);
 });
+
+/* -------- isAdPost：无 tag 帖子的关键词检测（回归） -------- */
+
+test("isAdPost：无 tag 但正文命中关键词 → 广告（此前被短路漏网）", () => {
+  const post = { text: "免费秒杀", textPlain: "免费秒杀", tags: [] };
+  assert.equal(isAdPost(post, [], []), true, "无 tag 时正文关键词也应生效");
+  const post2 = { text: "加Vwood123", textPlain: "加Vwood123" }; // tags 缺失
+  assert.equal(isAdPost(post2, [], ["wood"]), true, "tags 字段缺失时自定义关键词也应生效");
+});
+
+test("isAdPost：无 tag 且正文不命中 → 非广告", () => {
+  const post = { text: "今天很开心", textPlain: "今天很开心", tags: [] };
+  assert.equal(isAdPost(post, [], []), false);
+});
