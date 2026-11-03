@@ -163,6 +163,22 @@ export async function saveSettings(request, env, body) {
       }
       general.adTagsExtra = cleaned;
     }
+    // 自定义广告关键词：数组，每项转字符串后截断、上限 64 项；空串丢弃
+    if (general.adKeywords !== undefined) {
+      const list = Array.isArray(general.adKeywords) ? general.adKeywords : [general.adKeywords];
+      const cleaned = [];
+      const seen = new Set();
+      for (const raw of list) {
+        const item = String(raw ?? "").trim().slice(0, 64); // 关键词可稍长
+        if (!item) continue;
+        const key = item.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        cleaned.push(item);
+        if (cleaned.length >= 64) break;
+      }
+      general.adKeywords = cleaned;
+    }
     pending.push([KEYS.general, general]);
   }
 

@@ -101,6 +101,7 @@ async function hydrateMeta(env, ctx, channel, pageChannel) {
 export async function loadChannelPage(env, ctx, channel, before = null, limit = 20) {
   const [mediaSettings, general] = await Promise.all([getMediaSettings(env), getGeneral(env)]);
   const adTagsExtra = Array.isArray(general.adTagsExtra) ? general.adTagsExtra : [];
+  const adKeywordsExtra = Array.isArray(general.adKeywords) ? general.adKeywords : [];
   let parsed;
   if (channel.type === "public") {
     parsed = await fetchPublicChannelPage(env, ctx, channel.username, before, general.cacheTtl ?? 120);
@@ -120,8 +121,8 @@ export async function loadChannelPage(env, ctx, channel, before = null, limit = 
   const posts = decorated
     // 统一补 #标签：公开频道解析出的与桥接返回的帖子都走到这里
     .map((p) => ({ ...p, tags: p.tags?.length ? p.tags : extractTags(p.textPlain || p.text || "") }))
-    // 广告帖识别（内置 AD_TAGS + 后台自定义 adTagsExtra）→ 单页出口即过滤，信息流/频道页/RSS 全局隐藏
-    .filter((p) => !isAdPost(p, adTagsExtra));
+    // 广告帖识别（内置 AD_TAGS + 后台自定义 adTagsExtra + 广告关键词）→ 单页出口即过滤，信息流/频道页/RSS 全局隐藏
+    .filter((p) => !isAdPost(p, adTagsExtra, adKeywordsExtra));
   return { info, posts, next: parsed.nextBefore ?? null, cacheStatus: parsed.cacheStatus || null };
 }
 

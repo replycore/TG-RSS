@@ -482,12 +482,54 @@ export function normalizeTag(tag) {
     .toLowerCase();
 }
 
+/** 内置广告正文关键词（小写）：消息正文（textPlain/text）命中任一即视为广告。
+ * 这些词在正常聊天中极少出现，误伤率低。如需更多词可在后台自定义。
+ */
+export const AD_KEYWORDS = new Set([
+  // 明显推广/欺诈
+  "退款", "砍一刀", "助力", "邀请码", "合作",
+  " adv", " sale",
+  " 微 ", " 微商", " 加微信", " 加V", " 加v", " 微信", " 支付宝", " 银行卡",
+  " 贷款", " 分期", " 零首付", " 免息", " 礼包", " 赠送", " 抽奖",
+  "淘宝", "天猫", "京东", "拼多多", "花呗", "白条", "分期", "花呗", "借呗",
+  " affiliate", "partner", "sponsor", "collaboration", "gift", "giveaway", "promo",
+  // 敏感词（可能误伤，但用户可自定义）
+  "投资", "理财", "股票", "基金", "比特币", "区块链", "虚拟货币",
+  // 免费赠送类
+  "免费", "优惠券",
+]);
+
 /**
- * 帖子是否被标记为广告（tags 命中广告标签集合）。
+ * 检测消息正文是否包含广告关键词
+ * @param {object} post 帖子对象
+ * @param {string[]} [extraKeywords] 用户自定义的额外广告关键词
+ */
+export function containsAdKeywords(post, extraKeywords = []) {
+  const text = post.textPlain || post.text || "";
+  if (!text) return false;
+  const textLower = text.toLowerCase();
+  // 内置关键词
+  for (const kw of AD_KEYWORDS) {
+    if (textLower.includes(kw.toLowerCase())) return true;
+  }
+  // 自定义关键词
+  if (Array.isArray(extraKeywords)) {
+    for (const kw of extraKeywords) {
+      const w = String(kw).toLowerCase();
+      if (w && textLower.includes(w)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * 帖子是否被标记为广告（tags 命中广告标签集合 + 正文命中广告关键词）。
  * @param {object} post 帖子对象
  * @param {string[]} [extraTags] 用户在后台「常规」页追加的自定义广告标签（与内置集合取并集）
+ * @param {string[]} [extraKeywords] 用户在后台追加的自定义广告关键词（与内置假设集取并集）
  */
-export function isAdPost(post, extraTags = []) {
+export function isAdPost(post, extraTags = [], extraKeywords = []) {
+  // 1) tags 检测（保持原有逻辑）
   const tags = Array.isArray(post?.tags) ? post.tags : [];
   if (!tags.length) return false;
   const norm = (v) => normalizeTag(v);
@@ -498,5 +540,6 @@ export function isAdPost(post, extraTags = []) {
     const needle = norm(raw);
     if (needle && has(needle)) return true;
   }
-  return false;
+  // 2) 正文关键词检测（新增）
+  return containsAdKeywords(post, extraKeywords);
 }

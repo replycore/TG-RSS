@@ -48,6 +48,9 @@ fAdTags: { zh: "自定义广告标签（逗号 / 空格 / 换行分隔）", en: 
 phAdTags: { zh: "如：福利, 返利, coupon", en: "e.g.: 福利, 返利, coupon" },
 adFilter: { zh: "广告过滤", en: "Ad Filtering" },
 adHint: { zh: "帖子正文带任一标签即全局隐藏（信息流 / 频道页 / RSS 均不投放）。内置标签不可删，自定义标签与内置取并集判定。", en: "Posts containing any tag are hidden globally (feed / channel pages / RSS). Built-in tags cannot be removed; custom tags are unioned with built-ins." },
+fAdKeywords: { zh: "自定义广告关键词（逗号 / 空格 / 换行分隔）", en: "Custom ad keywords (comma / space / newline separated)" },
+phAdKeywords: { zh: "如：加V, 退款, freebie", en: "e.g.: addV, refund, freebie" },
+adKeywordsHint: { zh: "消息正文匹配任一关键词即隐藏。这些词在正常聊天中极少出现，误伤率低。内置标准词无需填写，可直接追加。", en: "Posts matching any keyword are hidden. These words rarely appear in normal chats, low false positive rate. Built-in keywords don't need to be added; extend as you wish." },
 adBuiltin: { zh: "内置标签：{tags}", en: "Built-in tags: {tags}" },
 chList: { zh: "频道列表", en: "Channels" },
 chHint: { zh: "支持粘贴分享链接（t.me/xxx、t.me/s/xxx、tg://resolve?domain=xxx）；显示名优先于 Telegram 原名；「隐藏」的频道仅登录后可见", en: "Paste share links (t.me/xxx, t.me/s/xxx, tg://resolve?domain=xxx); display name overrides the Telegram name; “hidden” channels are visible only after login" },
@@ -450,6 +453,7 @@ function renderGeneral(body, ctx, settings) {
           showDate: showDate.input.checked,
           theme: theme.select.value,
           adTagsExtra: parseAdTagsInput(adTags.input.value),
+          adKeywords: parseAdKeywordsInput(adKeywords.input.value),
         },
       });
       // 回写内存 settings（后端返回完整新 settings）：切 tab 重绘不再显示旧值
@@ -474,6 +478,11 @@ function renderGeneral(body, ctx, settings) {
     value: (g.adTagsExtra || []).join(", "),
     placeholder: t("adm.phAdTags"),
   });
+  // 广告关键词：消息正文命中即隐藏，自定义关键词与内置合集取并
+  const adKeywords = field(t("adm.fAdKeywords"), {
+    value: (g.adKeywords || []).join(", "),
+    placeholder: t("adm.phAdKeywords"),
+  });
   const adCard = el("div", { class: "card" });
   const builtin = ["广告", "廣告", "推广", "推廣", "赞助", "贊助", "ad", "ads", "advert", "advertisement", "sponsor", "sponsored", "promo", "aff"];
   adCard.append(
@@ -481,6 +490,10 @@ function renderGeneral(body, ctx, settings) {
     el("div", { class: "hint", text: t("adm.adHint") }),
     el("div", { class: "hint", text: t("adm.adBuiltin", { tags: builtin.map((b) => `#${b}`).join(" ") }) }),
     adTags.node,
+    el("div", { style: { marginTop: "1rem" } }, [
+      adKeywords.node,
+      el("div", { class: "hint", text: t("adm.adKeywordsHint") }),
+    ]),
   );
   body.append(adCard);
 }
@@ -491,6 +504,22 @@ function parseAdTagsInput(raw) {
   const out = [];
   for (const part of String(raw || "").split(/[,\s，、;；\n]+/)) {
     const item = part.replace(/^[#＃]+/, "").trim().slice(0, 32);
+    if (!item) continue;
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(item);
+    if (out.length >= 64) break;
+  }
+  return out;
+}
+
+/** 解析自定义广告关键词输入：逗号/空格/换行/顿号分隔，去重（大小写不敏感） */
+function parseAdKeywordsInput(raw) {
+  const seen = new Set();
+  const out = [];
+  for (const part of String(raw || "").split(/[,\s，、;；\n]+/)) {
+    const item = String(part ?? "").trim().slice(0, 64);
     if (!item) continue;
     const key = item.toLowerCase();
     if (seen.has(key)) continue;

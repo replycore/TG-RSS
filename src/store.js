@@ -28,6 +28,7 @@ export const DEFAULTS = {
     showDate: true,
     theme: "auto",
     adTagsExtra: [],
+    adKeywords: [],
   },
   media: {
     video: true,
