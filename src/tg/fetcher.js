@@ -3,7 +3,7 @@
  *  - 公开频道：t.me/s/ 预览页（Cache API 缓存 + KV 元信息）
  *  - 私密频道：调用管理员配置的账号桥接服务（bridge/）
  */
-import { HttpError, absoluteUrl, b64urlEncode } from "../util.js";
+import { HttpError, absoluteUrl, b64urlEncode, sanitizeHtml } from "../util.js";
 import { parseChannelPage } from "./parser.js";
 import { getBridgeSettings, getChannelMeta, putChannelMeta } from "../store.js";
 import { bridgeSignedHeaders, verifyBridgeResponse } from "../bridge-sign.js";
@@ -356,7 +356,10 @@ export function normalizeBridgePost(post, channel) {
     postId: Number.parseInt(post.postId, 10) || 0,
     url: post.url ? absoluteUrl(post.url) : null,
     date: post.date || null,
-    textHtml: post.textHtml || "",
+    // 纵深防御：公开频道走 parser 的 sanitizeHtml，桥接路径此前直接透传 textHtml。
+    // 官方 bridge 已 escapeHtml，但旧版/第三方 bridge 或被攻破的 bridge 可能返回任意 HTML，
+    // 而前端用 innerHTML 渲染 —— 这里再洗一次，与公开频道行为对齐。
+    textHtml: sanitizeHtml(post.textHtml || ""),
     textPlain: post.textPlain || "",
     views: post.views || null,
     comments: post.comments || null,

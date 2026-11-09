@@ -62,6 +62,7 @@ npx wrangler deploy --config wrangler.deploy.jsonc
 | `SETUP_CODE` | — | 设置后首次初始化管理员需带此口令（防裸站被人抢先初始化） |
 | `BRIDGE_URL` | `https://tg-bridge.example.com` | 私密频道桥接地址，优先于后台配置 |
 | `BRIDGE_TOKEN` | — | 桥接令牌 |
+| `TRUST_PROXY` | `1` | 仅自托管在可信反代之后时设置：此时才读取 `X-Forwarded-For` 作为客户端 IP。**Cloudflare 部署不要设**（用不可伪造的 `cf-connecting-ip`）。不设可防伪造 XFF 绕过登录限流 |
 
 优先级：**环境变量 > 后台首次初始化 > 未初始化（要求先初始化）**。
 

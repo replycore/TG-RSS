@@ -191,12 +191,28 @@ export function serializeCookie(name, value, opts = {}) {
   return parts.join("; ");
 }
 
-export function getClientIp(request) {
-  return (
-    request.headers.get("cf-connecting-ip") ||
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    "unknown"
-  );
+/**
+ * 客户端 IP。
+ *
+ * 安全说明：`X-Forwarded-For` 是客户端可任意伪造的请求头。仅当部署在可信反代
+ * 之后（自托管 Node / Nginx 等）并显式设置 `TRUST_PROXY=1` 时才读取，否则
+ * 伪造该头即可绕过登录限流（8 次/5 分钟）暴力破解密码。
+ *
+ * Cloudflare 部署不受影响：`cf-connecting-ip` 由边缘注入，客户端无法伪造。
+ */
+export function getClientIp(request, env) {
+  const cf = request.headers.get("cf-connecting-ip");
+  if (cf && cf.trim()) return cf.trim();
+
+  const trustProxy = env && (env.TRUST_PROXY === true || env.TRUST_PROXY === "1" || env.TRUST_PROXY === "true");
+  if (trustProxy) {
+    const xff = request.headers.get("x-forwarded-for");
+    if (xff) {
+      const first = xff.split(",")[0]?.trim();
+      if (first) return first;
+    }
+  }
+  return "unknown";
 }
 
 /* -------------------------------------------------------------- HTML 安全化 */
@@ -483,26 +499,49 @@ export function normalizeTag(tag) {
 }
 
 /** 内置广告正文关键词（小写）：消息正文（textPlain/text）命中任一即视为广告。
- * 这些词在正常聊天中极少出现，误伤率低。如需更多词可在后台自定义。
+ *
+ * 选取原则：只收「强广告特征」词——正常资讯/聊天里几乎不会出现的表达。
+ * 曾收录的「免费 / 合作 / 投资 / 理财 / 股票 / 基金 / 京东 / 淘宝 / 微信 / 赠送」
+ * 等高频日常词已移除：它们会把「这个开源项目完全免费」「推荐一个基金定投教程」
+ * 「我们团队合作完成了这个项目」这类正常内容整条隐藏，且过滤发生在信息流出口，
+ * 用户完全无从感知。需要更激进的过滤请在后台「自定义广告关键词」里自行追加。
+ *
+ * 含 ASCII 字母的词按词边界匹配（避免 "aff" 命中 "staff"/"affair"）；
+ * 纯中文词按子串匹配（中文无词边界概念，强特征词足够独特）。
  */
 export const AD_KEYWORDS = new Set([
-  // 明显推广/欺诈
-  "退款", "砍一刀", "助力", "邀请码", "合作",
-  " adv", " sale",
-  " 微 ", " 微商", " 加微信", " 加V", " 加v", " 微信", " 支付宝", " 银行卡",
-  " 贷款", " 分期", " 零首付", " 免息", " 礼包", " 赠送", " 抽奖",
-  "淘宝", "天猫", "京东", "拼多多", "花呗", "白条", "分期", "花呗", "借呗",
-  " affiliate", "partner", "sponsor", "collaboration", "gift", "giveaway", "promo",
-  // 敏感词（可能误伤，但用户可自定义）
-  "投资", "理财", "股票", "基金", "比特币", "区块链", "虚拟货币",
-  // 免费赠送类
-  "免费", "优惠券",
+  // 交易/引流类（强特征）
+  "退款", "砍一刀", "助力", "邀请码", "优惠券", "代金券", "秒杀", "包邮",
+  "返利", "刷单", "代购", "微商", "加微信", "加v", "零首付", "免息",
+  "抽奖", "礼包", "限时折扣", "低价出", "一手货源", "诚招代理",
+  "日赚", "躺赚",
+  // 英文强特征
+  "affiliate", "sponsored", "giveaway", "promo code", "discount code",
 ]);
+
+const ASCII_KW = /[a-z0-9]/i;
+
+/**
+ * 单个关键词是否命中。ASCII 词要求前后不是字母/数字（词边界），
+ * 纯中文词直接子串匹配。
+ */
+function keywordHit(textLower, kw) {
+  if (!ASCII_KW.test(kw)) return textLower.includes(kw);
+  let from = 0;
+  for (;;) {
+    const i = textLower.indexOf(kw, from);
+    if (i === -1) return false;
+    const before = textLower[i - 1] || "";
+    const after = textLower[i + kw.length] || "";
+    if (!/[a-z0-9]/.test(before) && !/[a-z0-9]/.test(after)) return true;
+    from = i + 1;
+  }
+}
 
 /**
  * 检测消息正文是否包含广告关键词
  * @param {object} post 帖子对象
- * @param {string[]} [extraKeywords] 用户自定义的额外广告关键词
+ * @param {string[]} [extraKeywords] 用户自定义的额外广告关键词（按子串匹配，由用户自行负责精度）
  */
 export function containsAdKeywords(post, extraKeywords = []) {
   const text = post.textPlain || post.text || "";
@@ -510,7 +549,7 @@ export function containsAdKeywords(post, extraKeywords = []) {
   const textLower = text.toLowerCase();
   // 内置关键词
   for (const kw of AD_KEYWORDS) {
-    if (textLower.includes(kw.toLowerCase())) return true;
+    if (keywordHit(textLower, kw)) return true;
   }
   // 自定义关键词
   if (Array.isArray(extraKeywords)) {
@@ -535,8 +574,8 @@ export function isAdPost(post, extraTags = [], extraKeywords = []) {
     const norm = (v) => normalizeTag(v);
     const has = (needle) => tags.some((t) => norm(t) === needle);
     if ([...AD_TAGS].some((needle) => has(needle))) return true;
-    if (!Array.isArray(extraTags)) return false;
-    for (const raw of extraTags) {
+    const extras = Array.isArray(extraTags) ? extraTags : [];
+    for (const raw of extras) {
       const needle = norm(raw);
       if (needle && has(needle)) return true;
     }

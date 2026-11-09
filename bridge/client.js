@@ -207,11 +207,23 @@ export async function downloadThumbToCache(peer, msg, size) {
   // 位置式第三参会静默丢弃（thumb 变 undefined → 下载完整视频）。thumb 必须走对象形式。
   const buf = await client.downloadMedia(msg, { thumb: size });
   if (!buf || !buf.length) throw new Error("thumb_empty");
-  // .part + rename 原子写入：中断不留截断文件（截断 .jpg 会被 size>0 判定永久命中）
-  const tmp = path.join(dir, `${base}.jpg.part`);
+  // .part + rename 原子写入：中断不留截断文件（截断 .jpg 会被 size>0 判定永久命中）。
+  // 临时名加随机后缀：PM2 cluster / 多实例部署下，两路并发下载同一缩略图不会共用
+  // 同一个 .part（否则一方 rename 后另一方 ENOENT → 500）。
+  const tmp = path.join(dir, `${base}.jpg.${Math.random().toString(36).slice(2, 10)}.part`);
   const file = path.join(dir, `${base}.jpg`);
-  fs.writeFileSync(tmp, buf);
-  fs.renameSync(tmp, file);
+  try {
+    fs.writeFileSync(tmp, buf);
+    // 等待期间另一路已落盘完整文件：直接复用，不覆盖
+    if (fs.existsSync(file) && fs.statSync(file).size > 0) {
+      fs.rmSync(tmp, { force: true });
+      return file;
+    }
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ }
+    throw err;
+  }
   return file;
 }
 

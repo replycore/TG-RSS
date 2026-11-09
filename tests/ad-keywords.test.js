@@ -13,16 +13,36 @@ import { isAdPost, containsAdKeywords, AD_KEYWORDS } from "../src/util.js";
 
 test("containsAdKeywords：内置关键词命中", () => {
   const post = { text: "免费领优惠券", textPlain: "免费领优惠券" };
-  assert.equal(containsAdKeywords(post), true, "内置关键词'免费' 命中");
+  assert.equal(containsAdKeywords(post), true, "内置关键词'优惠券' 命中");
 });
 
 test("containsAdKeywords：内置关键词不区分大小写", () => {
-  const post = { text: "免费优惠", textPlain: "免费优惠" };
-  assert.equal(containsAdKeywords(post), true);
-  const post2 = { text: "混 合 免费", textPlain: "混 合 免费" };
-  assert.equal(containsAdKeywords(post2), true);
-  const post3 = { text: "退款失败", textPlain: "退款失败" };
-  assert.equal(containsAdKeywords(post3), true);
+  assert.equal(containsAdKeywords({ text: "限时优惠券", textPlain: "限时优惠券" }), true);
+  assert.equal(containsAdKeywords({ text: "SPONSORED post", textPlain: "SPONSORED post" }), true);
+  assert.equal(containsAdKeywords({ text: "sponsored post", textPlain: "sponsored post" }), true);
+  assert.equal(containsAdKeywords({ text: "退款失败", textPlain: "退款失败" }), true);
+});
+
+test("containsAdKeywords：正常内容不误伤（回归）", () => {
+  const normal = [
+    "这个开源项目完全免费，代码在 GitHub 上",
+    "Telegram 新增了免费的表情包功能",
+    "推荐一个基金定投的入门教程",
+    "我们和隔壁团队合作完成了这个项目",
+    "在京东买了个键盘，手感不错",
+    "今天的股市行情：上证指数上涨 1.2%",
+    "关注我的微信公众号获取更多内容",
+    "今天天气晴朗，适合出门散步",
+  ];
+  for (const text of normal) {
+    assert.equal(containsAdKeywords({ textPlain: text }), false, `不应误判为广告：${text}`);
+  }
+});
+
+test("containsAdKeywords：ASCII 关键词按词边界匹配", () => {
+  assert.equal(containsAdKeywords({ textPlain: "staff meeting notes" }), false, "staff 不应命中");
+  assert.equal(containsAdKeywords({ textPlain: "an affair to remember" }), false, "affair 不应命中");
+  assert.equal(containsAdKeywords({ textPlain: "grab the affiliate link" }), true);
 });
 
 test("containsAdKeywords：自定义关键词命中", () => {
@@ -42,7 +62,7 @@ test("containsAdKeywords：关键词不在本列表中，不触发", () => {
 });
 
 test("containsAdKeywords：包含多个内置词，命中一个即 true", () => {
-  const post = { text: "免费领优惠券+免费试用", textPlain: "免费领优惠券+免费试用" };
+  const post = { text: "优惠券+秒杀", textPlain: "优惠券+秒杀" };
   assert.equal(containsAdKeywords(post), true);
 });
 
@@ -50,7 +70,7 @@ test("containsAdKeywords：包含多个内置词，命中一个即 true", () => 
 
 test("isAdPost：标签不命中，正文命中关键词 → 广告", () => {
   const post = { text: "免费秒杀", textPlain: "免费秒杀", tags: ["日常"] };
-  assert.equal(isAdPost(post, [], []), true, "正文'免费秒杀'命中内置关键词");
+  assert.equal(isAdPost(post, [], []), true, "正文'秒杀'命中内置关键词");
 });
 
 test("isAdPost：标签不命中，正文不命中 → 非广告", () => {

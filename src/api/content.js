@@ -220,11 +220,23 @@ export async function getChannelPosts(request, env, ctx, url, key, authenticated
   const { info, posts: allPosts, next, cacheStatus } = await loadFilledChannelPage(env, ctx, channel, before, limit);
   // 与信息流一致的 #标签 过滤
   const tag = String(url.searchParams.get("tag") || "").replace(/^#/, "").trim().toLowerCase();
-  const posts = tag
+  const matched = tag
     ? allPosts.filter((p) => (p.tags || []).some((t) => String(t).toLowerCase() === tag))
     : allPosts;
+
+  // loadFilledChannelPage 只保证「至少凑够 limit 条」（会整页取回），这里必须按 limit 截断，
+  // 否则接口返回条数与调用方请求的 limit 不符。截断时游标必须回退到「最后一条展示帖」——
+  // 否则 next 已越过被截掉的帖子，下一页永远取不回来（与 getFeed 的游标回退同根）。
+  let posts = matched;
+  let nextCursor = next;
+  if (matched.length > limit) {
+    const lastKept = matched[limit - 1];
+    posts = matched.slice(0, limit);
+    if (lastKept && lastKept.postId != null) nextCursor = String(lastKept.postId);
+  }
+
   // _up：上游页面缓存状态（HIT/MISS/BYPASS），供真实 Workers 上验证 N-2 缓存命中
-  return { channel: info, posts, next, count: posts.length, _up: cacheStatus || null };
+  return { channel: info, posts, next: nextCursor, count: posts.length, _up: cacheStatus || null };
 }
 
 /* --------------------------------------------------------------- GET /api/feed */

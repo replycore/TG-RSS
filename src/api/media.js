@@ -158,7 +158,57 @@ export async function getMediaList(request, env, ctx, url, authenticated) {
 
 /* ------------------------------------------- 文档（文件类）直链按需解析 */
 
+/** 单条消息 embed 页缓存 TTL：避免同一 post 被反复打上游（也是 doc 接口的防放大层） */
+const EMBED_CACHE_TTL_SEC = 300;
+
+/**
+ * 取单条消息的 embed 页 HTML（带 Cache API 缓存）。
+ * 该请求此前是裸 fetch：无缓存、无限流，未登录用户可对同一批 postId 高频调用，
+ * 既消耗 Worker 子请求配额，也把出口 IP 打到被 t.me 限流。
+ */
+async function fetchEmbedPage(targetUrl, ctx) {
+  const cache = getCache();
+  const key = new Request(`https://tg-rss-embed.invalid/${b64urlEncode(targetUrl)}`, { method: "GET" });
+  if (cache) {
+    try {
+      const hit = await cache.match(key);
+      if (hit) {
+        const storedAt = Number(hit.headers.get("x-cache-stored-at") || 0);
+        if (storedAt > 0 && (Date.now() - storedAt) / 1000 <= EMBED_CACHE_TTL_SEC) {
+          return await hit.text();
+        }
+      }
+    } catch {
+      /* 缓存不可用则回源 */
+    }
+  }
+
+  const res = await fetch(targetUrl, { headers: { "user-agent": UA, accept: "text/html" } });
+  if (!res.ok) return null;
+  const html = await res.text();
+  if (cache && html) {
+    try {
+      const stored = new Response(html, {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "cache-control": `public, max-age=${EMBED_CACHE_TTL_SEC}`,
+          "x-cache-stored-at": String(Date.now()),
+        },
+      });
+      const done = cache.put(key, stored).catch(() => {});
+      if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(done);
+      else await done;
+    } catch {
+      /* 写缓存失败不影响本次返回 */
+    }
+  }
+  return html;
+}
+
 export async function resolveDocument(request, env, ctx, url, authenticated) {
+  // 与媒体代理共用每 IP 限流：此接口每次可能触发一次 t.me 上游请求
+  proxyRateConsume(getClientIp(request, env));
+
   const channels = await getChannels(env);
   const key = url.searchParams.get("key") || "";
   const postId = url.searchParams.get("post") || "";
@@ -184,11 +234,11 @@ export async function resolveDocument(request, env, ctx, url, authenticated) {
   let direct = target.url || null;
   if (!direct) {
     try {
-      const res = await fetch(`https://t.me/${encodeURIComponent(channel.username)}/${postId}?embed=1`, {
-        headers: { "user-agent": UA, accept: "text/html" },
-      });
-      if (res.ok) {
-        const html = await res.text();
+      const html = await fetchEmbedPage(
+        `https://t.me/${encodeURIComponent(channel.username)}/${postId}?embed=1`,
+        ctx,
+      );
+      if (html) {
         const single = parseSingleMessage(html);
         const candidate = (single?.media || []).find((m) => (m.name && target.name && m.name === target.name)) ||
           (single?.media || [])[index];
@@ -359,7 +409,7 @@ export async function proxyMedia(request, env, ctx, url) {
   const filename = sanitizeFilename(nameHint || basenameOf(target));
 
   // 速率限制：每 IP 每分钟 120 次（媒体播放会连续发 Range 请求，阈值放宽松）
-  proxyRateConsume(getClientIp(request));
+  proxyRateConsume(getClientIp(request, env));
 
   const headers = new Headers({ "user-agent": UA, accept: "*/*" });
   const range = request.headers.get("range");

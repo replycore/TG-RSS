@@ -74,7 +74,7 @@ export async function requireAdmin(request, env) {
 export async function handleSetup(request, env, body) {
   // 人机验证优先：机器人先过验证，才消耗限流额度
   await verifyTurnstile(request, env, body);
-  const ip = getClientIp(request);
+  const ip = getClientIp(request, env);
   const limit = await consumeRateLimit(env, ip);
   if (!limit.allowed) {
     const err = new HttpError(429, "尝试次数过多，请稍后再试", "rate_limited");
@@ -107,7 +107,7 @@ export async function handleSetup(request, env, body) {
 
 export async function handleLogin(request, env, body) {
   await verifyTurnstile(request, env, body);
-  const ip = getClientIp(request);
+  const ip = getClientIp(request, env);
   const limit = await consumeRateLimit(env, ip);
   if (!limit.allowed) {
     const err = new HttpError(429, "尝试次数过多，请稍后再试", "rate_limited");

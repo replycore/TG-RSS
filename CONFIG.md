@@ -14,6 +14,7 @@
 | `BRIDGE_URL` | 私密频道桥接地址（设了优先后台配置） | 空 | `npx wrangler secret put BRIDGE_URL` |
 | `BRIDGE_TOKEN` | 桥接令牌（设了优先后台配置） | 空 | `npx wrangler secret put BRIDGE_TOKEN` |
 | `DEBUG` | 设任意值后，500 错误会回显详情 | 未设 | 控制台 → Workers → tg-rss → Variables |
+| `TRUST_PROXY` | 仅自托管在可信反代之后时设为 `1`：此时才读取 `X-Forwarded-For` 作为客户端 IP。Cloudflare 部署**不要设**（用 `cf-connecting-ip`，不可伪造）。不设可防伪造 XFF 绕过登录限流 | 未设 | 控制台 → Workers → tg-rss → Variables |
 
 - 删除变量：`npx wrangler secret delete <名字>`
 - Pages 侧：项目 → Settings → Variables and Secrets 里添加

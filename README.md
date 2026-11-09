@@ -62,6 +62,7 @@ Or click the button below to deploy directly:
 | `SETUP_CODE` | — | When set, first-time admin setup requires this code (prevents strangers from initializing your site) |
 | `BRIDGE_URL` | `https://tg-bridge.example.com` | Private-channel bridge address (takes precedence over admin panel setting) |
 | `BRIDGE_TOKEN` | — | Bridge token |
+| `TRUST_PROXY` | `1` | Only for self-hosting behind a trusted reverse proxy: read `X-Forwarded-For` as the client IP. **Do not set on Cloudflare** (it uses the unforgeable `cf-connecting-ip`). Leaving it unset prevents rate-limit bypass via forged XFF headers |
 
 Priority: **environment variables > admin panel setup > uninitialized (setup required)**.
 

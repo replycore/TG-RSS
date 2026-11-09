@@ -100,7 +100,7 @@ export async function checkRssToken(request, env, url) {
 }
 
 async function assertFailQuota(env, request) {
-  const ip = getClientIp(request);
+  const ip = getClientIp(request, env);
   const r = await failConsume(env, ip);
   if (!r.allowed) {
     const err = new HttpError(429, "令牌尝试次数过多，请稍后再试", "rate_limited");
