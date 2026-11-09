@@ -13,7 +13,7 @@ import { getGeneral, getMediaSettings, getChannels } from "../store.js";
 import { bridgeSignedHeaders, verifyBridgeResponse } from "../bridge-sign.js";
 import { verifyProxySig } from "../proxy-sign.js";
 import { loadChannelPage, visibleChannels, findChannel, assertVisible } from "./content.js";
-import { resolveBridge, fetchPublicChannelPage } from "../tg/fetcher.js";
+import { resolveBridge, fetchPublicChannelPage, proxyUrlFor } from "../tg/fetcher.js";
 import { parseSingleMessage } from "../tg/parser.js";
 
 export const MEDIA_TYPES = ["video", "image", "audio", "file"];
@@ -250,10 +250,13 @@ export async function resolveDocument(request, env, ctx, url, authenticated) {
   }
 
   const mediaSettings = await getMediaSettings(env);
+  // 与帖子媒体统一走 proxyUrlFor：手写 /api/media/proxy?u= 会绕开 bridge 签名
+  // （当前只服务公开频道所以没暴露，一旦放开私密频道就会 403）
+  const proxyUrl = direct ? await proxyUrlFor(direct, mediaSettings) : null;
   return {
     name: target.name || null,
     size: target.size || null,
-    url: direct ? (mediaSettings.proxyAll === false ? direct : `/api/media/proxy?u=${b64urlEncode(direct)}`) : null,
+    url: proxyUrl,
     direct,
     link: target.permalink || post.url,
   };

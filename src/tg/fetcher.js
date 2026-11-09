@@ -3,7 +3,7 @@
  *  - 公开频道：t.me/s/ 预览页（Cache API 缓存 + KV 元信息）
  *  - 私密频道：调用管理员配置的账号桥接服务（bridge/）
  */
-import { HttpError, absoluteUrl, b64urlEncode, sanitizeHtml } from "../util.js";
+import { HttpError, absoluteUrl, b64urlEncode, b64urlDecodeToString, sanitizeHtml } from "../util.js";
 import { parseChannelPage } from "./parser.js";
 import { getBridgeSettings, getChannelMeta, putChannelMeta } from "../store.js";
 import { bridgeSignedHeaders, verifyBridgeResponse } from "../bridge-sign.js";
@@ -395,6 +395,32 @@ export async function proxyUrlFor(targetUrl, settings) {
   return `/api/media/proxy?u=${u}${s}`;
 }
 
+/**
+ * 频道头像 → 站内代理地址。
+ * 头像原先直接把 t.me 的 CDN 地址（cdnN.telesco.pe）塞进 <img src>，由浏览器直连：
+ * 该域名在部分网络（尤其国内）不可达或时通时断，表现为「头像经常碎图」，而帖子图片
+ * 因为走了 /api/media/proxy 反而正常。这里与帖子媒体统一走代理。
+ * 另外兼容 KV 里已存的旧值：桥接头像存的是带 7 天过期的 /api/media/proxy?...&sig=，
+ * 命中时用当前 token 重签，避免过期后长期碎图。
+ */
+export async function proxyAvatarUrl(avatar, settings) {
+  if (!avatar || typeof avatar !== "string") return null;
+  const proxied = /^\/api\/media\/proxy\?u=([A-Za-z0-9_-]+)/.exec(avatar);
+  if (proxied) {
+    // 已是站内代理：解出原始地址重新签名（bridge 必须代理，无视 proxyAll=false）
+    try {
+      const raw = b64urlDecodeToString(proxied[1]);
+      // 防套娃：解出来还是站内相对地址说明历史数据已嵌套，原样返回不再包一层
+      if (!/^https?:\/\//i.test(raw)) return avatar;
+      return await proxyUrlFor(raw, { ...settings, proxyAll: true });
+    } catch {
+      return avatar;
+    }
+  }
+  if (!/^https?:\/\//i.test(avatar)) return null; // 脏数据/相对地址
+  return proxyUrlFor(avatar, settings);
+}
+
 export async function decoratePostMedia(post, settings) {
   const media = await Promise.all(
     (post.media || []).map(async (m) => {
@@ -402,11 +428,17 @@ export async function decoratePostMedia(post, settings) {
       const eff = m.forceProxy ? { ...settings, proxyAll: true } : settings;
       const out = { ...m };
       delete out.forceProxy;
+      const src = await proxyUrlFor(m.url, eff);
+      const thumbSrc = await proxyUrlFor(m.thumb, eff);
       return {
         ...out,
-        src: await proxyUrlFor(m.url, eff),
+        // url/thumb 直接给可用地址：任何按 url 取图的第三方客户端也不会踩到「直连 CDN 碎图」
+        url: src,
+        thumb: thumbSrc,
+        src,
+        // direct 是原始上游地址的唯一出口（下载/排障用），其余字段一律站内可达
         direct: m.url,
-        thumbSrc: await proxyUrlFor(m.thumb, eff),
+        thumbSrc,
         link: m.permalink || post.url,
       };
     })

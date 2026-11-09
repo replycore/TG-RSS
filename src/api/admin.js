@@ -25,7 +25,7 @@ import {
   clearSessionCookie,
   requireAdmin,
 } from "../auth.js";
-import { fetchPublicChannelPage, fetchBridgeFeed, resolvePublicChannelMeta } from "../tg/fetcher.js";
+import { fetchPublicChannelPage, fetchBridgeFeed, resolvePublicChannelMeta, proxyAvatarUrl } from "../tg/fetcher.js";
 import { getRssTokenInfo, rotateRssToken, revokeRssToken } from "../rss-auth.js";
 
 /* ------------------------------------------------------------------ 状态 */
@@ -271,10 +271,12 @@ export async function testChannel(request, env, ctx, body) {
     try {
       const parsed = await fetchPublicChannelPage(env, ctx, channel.username, null, 0);
       const latest = parsed.posts[0] || null;
+      // 与前台一致：预览用的头像也走站内代理（否则管理端在受限网络下同样碎图）
+      const meta = { ...parsed.channel, avatar: await proxyAvatarUrl(parsed.channel?.avatar, await getMediaSettings(env)) };
       return {
         ok: true,
         channel,
-        meta: parsed.channel,
+        meta,
         count: parsed.posts.length,
         sample: latest
           ? {

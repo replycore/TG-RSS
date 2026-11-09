@@ -21,6 +21,7 @@ import {
   fetchBridgeFeed,
   decoratePostMedia,
   resolveBridge,
+  proxyAvatarUrl,
 } from "../tg/fetcher.js";
 
 const MAX_FEED_CHANNELS = 8;
@@ -117,6 +118,8 @@ export async function loadChannelPage(env, ctx, channel, before = null, limit = 
     _bridgeToken: bridge?.token || null,
     _bridgeHost: bridge?.host || null,
   };
+  // 头像与帖子媒体一致走站内代理：直连 telesco.pe 在部分网络下会碎图
+  info.avatar = await proxyAvatarUrl(info.avatar, signSettings);
   const decorated = await Promise.all(parsed.posts.map((p) => decoratePostMedia(p, signSettings)));
   const posts = decorated
     // 统一补 #标签：公开频道解析出的与桥接返回的帖子都走到这里
@@ -187,6 +190,14 @@ export async function listChannels(request, env, ctx, url, authenticated) {
   const channels = await getChannels(env);
   const list = visibleChannels(channels, authenticated);
   const metas = await Promise.all(list.map((ch) => getChannelMeta(env, ch.key).catch(() => null)));
+  // 侧栏头像同样走代理（KV 里存的是原始 CDN 地址）
+  const [mediaSettings, bridge] = await Promise.all([getMediaSettings(env), resolveBridge(env)]);
+  const signSettings = {
+    ...mediaSettings,
+    _bridgeToken: bridge?.token || null,
+    _bridgeHost: bridge?.host || null,
+  };
+  const avatars = await Promise.all(metas.map((m) => proxyAvatarUrl(m?.avatar, signSettings)));
   return {
     channels: list.map((ch, i) => ({
       key: ch.key,
@@ -196,7 +207,7 @@ export async function listChannels(request, env, ctx, url, authenticated) {
       tgId: ch.type === "private" ? ch.tgId : null,
       hidden: !!ch.hidden,
       mediaOnly: !!ch.mediaOnly,
-      avatar: metas[i]?.avatar || null,
+      avatar: avatars[i] || null,
       description: metas[i]?.description || "",
       counters: metas[i]?.counters || {},
       hasMeta: !!metas[i],

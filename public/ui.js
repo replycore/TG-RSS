@@ -112,7 +112,20 @@ export function initials(name) {
 }
 
 export function avatarNode(url, name, cls = "avatar") {
-  if (url) return el("img", { class: cls, src: url, alt: name || "", loading: "lazy" });
+  if (url) {
+    const img = el("img", { class: cls, alt: name || "", loading: "lazy", decoding: "async" });
+    // 加载失败（上游 403/超时/离线）退回首字母占位，而不是留一个破图标。
+    // 先挂监听再赋 src：赋值即开始加载，失败可能早于监听注册。
+    img.addEventListener(
+      "error",
+      () => {
+        img.replaceWith(el("span", { class: `${cls} fallback`, text: initials(name) }));
+      },
+      { once: true }
+    );
+    img.src = url;
+    return img;
+  }
   return el("span", { class: `${cls} fallback`, text: initials(name) });
 }
 

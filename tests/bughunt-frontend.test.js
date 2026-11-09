@@ -85,7 +85,7 @@ test("同 hash 下登录成功跳转后台（go 主动 route）", async () => {
   globalThis.fetch = async (input, init = {}) => {
     const u = String(input);
     const method = init.method || "GET";
-    if (u.includes("/api/config")) return jsonRes({ siteTitle: "T", version: "1.3.3" });
+    if (u.includes("/api/config")) return jsonRes({ siteTitle: "T", version: "1.3.4" });
     if (u.includes("/api/admin/state")) {
       return jsonRes({ initialized: true, authenticated: authed, username: "admin", credentialSource: "kv", envManaged: false, hasBridge: false });
     }
